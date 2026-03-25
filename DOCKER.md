@@ -118,6 +118,27 @@ docker run --rm linkedin-gateway:latest \
 
 ---
 
+## 📂 Volúmenes y Persistencia
+
+Los datos de configuración y logs persisten fuera del contenedor:
+
+```yaml
+volumes:
+  - ./config.json:/app/config.json          # Configuración de LinkedIn
+  - ./processed_messages.json:/app/processed_messages.json  # Estado
+  - ./logs:/app/logs                        # Logs de aplicación
+  - ./data:/app/data                        # Almacenamiento futuro
+```
+
+**Archivos accesibles desde host:**
+- `logs/gateway.log` - Logs en vivo
+- `config.json` - Configuración (editable)
+- `processed_messages.json` - Mensajes ya sincronizados
+
+**Ver documentación completa:** `VOLUMES.md`
+
+---
+
 ## 🔄 CI/CD Automático
 
 El workflow `.github/workflows/docker.yml`:
@@ -166,6 +187,10 @@ docker run -d \
   --name linkedin-gateway \
   --restart always \
   -p 18791:8000 \
+  -v $(pwd)/config.json:/app/config.json \
+  -v $(pwd)/processed_messages.json:/app/processed_messages.json \
+  -v $(pwd)/logs:/app/logs \
+  -v $(pwd)/data:/app/data \
   -e PYTHONUNBUFFERED=1 \
   ghcr.io/punteriaczero/linkedin-proxy:v1.0.0
 ```
