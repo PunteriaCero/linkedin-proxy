@@ -256,6 +256,11 @@ def validate_linkedin_cookies_with_profile(li_at: str, jsessionid: str, bcookie:
     Valida que las cookies sean correctas y retorna el perfil del usuario.
     Retorna (is_valid, error_message, profile_data)
     
+    profile_data contiene:
+    - 'name': Nombre completo del usuario
+    - 'profile': Objeto de perfil completo
+    - 'updated_cookies': Cookies actualizadas por LinkedIn (para guardar)
+    
     :param li_at: Cookie li_at (requerida)
     :param jsessionid: Cookie JSESSIONID (requerida)
     :param bcookie: Cookie bcookie (opcional pero recomendada)
@@ -330,7 +335,20 @@ def validate_linkedin_cookies_with_profile(li_at: str, jsessionid: str, bcookie:
             
             logger.info(f"✓ Validación exitosa. Perfil: {full_name}")
             logger.debug(f"Perfil data: {profile}")
-            return True, "Cookies válidas", {'name': full_name, 'profile': profile}
+            
+            # 🔥 IMPORTANTE: Capturar cookies actualizadas por LinkedIn
+            updated_cookies = {}
+            if hasattr(client, 'client') and hasattr(client.client, 'session'):
+                logger.info("Capturando cookies actualizadas...")
+                for key, value in client.client.session.cookies.items():
+                    updated_cookies[key] = value
+                    logger.debug(f"Cookie actualizada: {key} = {value[:30]}...")
+            
+            return True, "Cookies válidas", {
+                'name': full_name,
+                'profile': profile,
+                'updated_cookies': updated_cookies
+            }
         else:
             logger.warning("Perfil vacío retornado")
             return False, "Perfil vacío - posible cookie expirada", {}
@@ -696,7 +714,17 @@ async def admin_dashboard():
                         const data = await response.json();
                         
                         if (data.success) {{
-                            alert('✅ Cookies validadas correctamente!\\n\\nUsuario: ' + (data.user_name || 'N/A'));
+                            let message = '✅ Cookies validadas correctamente!\\n\\nUsuario: ' + (data.user_name || 'N/A');
+                            
+                            // Si cookies fueron actualizadas por LinkedIn
+                            if (data.cookies_updated) {{
+                                message += '\\n\\n🔄 Cookies actualizadas automáticamente:';
+                                if (data.updated_fields) {{
+                                    message += '\\n' + data.updated_fields.join(', ');
+                                }}
+                            }}
+                            
+                            alert(message);
                         }} else {{
                             alert('❌ Validación fallida:\\n\\n' + data.detail);
                         }}
@@ -1395,11 +1423,34 @@ async def validate_cookies_endpoint(request: ValidateCookiesRequest):
         if is_valid:
             logger.info("✓ Validación exitosa")
             user_name = profile_data.get('name', 'Unknown')
+            updated_cookies = profile_data.get('updated_cookies', {})
+            
+            # 🔥 GUARDAR COOKIES ACTUALIZADAS
+            if updated_cookies:
+                logger.info("Guardando cookies actualizadas...")
+                config = load_config()
+                
+                # Actualizar cookies en config
+                for key, value in updated_cookies.items():
+                    # Mapear nombres de cookies si es necesario
+                    config_key = key.lower()
+                    if config_key in config:
+                        config[config_key] = value
+                        logger.info(f"✓ Actualizado {config_key}")
+                    elif key in config:
+                        config[key] = value
+                        logger.info(f"✓ Actualizado {key}")
+                
+                # Guardar config actualizado
+                save_config(config)
+                logger.info("✓ Cookies actualizadas guardadas en config.json")
             
             return {
                 "success": True,
                 "user_name": user_name,
-                "detail": validation_msg
+                "detail": validation_msg,
+                "cookies_updated": len(updated_cookies) > 0,
+                "updated_fields": list(updated_cookies.keys())
             }
         else:
             logger.error(f"Validación fallida: {validation_msg}")
