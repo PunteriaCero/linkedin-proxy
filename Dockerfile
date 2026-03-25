@@ -25,8 +25,18 @@ ENV PATH=/root/.local/bin:$PATH
 COPY main.py test_gateway.py ./
 COPY config.example.json .env.example ./
 
-# Crear directorio para logs
-RUN mkdir -p /app/logs
+# Crear directorios para datos persistentes
+RUN mkdir -p /app/logs /app/data /app/config
+
+# ===== VOLUMES PARA PERSISTENCIA =====
+# Directorio de logs - accesible desde afuera
+VOLUME ["/app/logs"]
+
+# Directorio de configuración y datos
+VOLUME ["/app/data"]
+
+# Archivos individuales de configuración (si se montan directamente)
+VOLUME ["/app/config"]
 
 # Exponer puerto
 EXPOSE 8000

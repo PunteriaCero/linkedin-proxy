@@ -19,20 +19,39 @@ from fastapi.staticfiles import StaticFiles
 import httpx
 from linkedin_api import Linkedin
 
+# ===== PATHS Y CONSTANTES (ANTES DE LOGGING) =====
+# Usar rutas que respeten los VOLUMEs de Docker
+if os.path.exists("/app/config"):
+    # Ejecutando en Docker - usar rutas de volúmenes
+    CONFIG_DIR = Path("/app/config")
+    LOGS_DIR = Path("/app/logs")
+    DATA_DIR = Path("/app/data")
+else:
+    # Desarrollo local - crear directorios en raíz
+    CONFIG_DIR = Path("./config")
+    LOGS_DIR = Path("./logs")
+    DATA_DIR = Path("./data")
+
+# Crear directorios si no existen
+CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+LOGS_DIR.mkdir(parents=True, exist_ok=True)
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+# Archivos de configuración y datos
+CONFIG_FILE = str(CONFIG_DIR / "config.json")
+PROCESSED_MESSAGES_FILE = str(DATA_DIR / "processed_messages.json")
+LOG_FILE = str(LOGS_DIR / "gateway.log")
+
 # ===== CONFIGURACIÓN LOGGING =====
 logging.basicConfig(
     level=logging.DEBUG,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('gateway.log'),
+        logging.FileHandler(LOG_FILE),
         logging.StreamHandler()
     ]
 )
 logger = logging.getLogger(__name__)
-
-# ===== PATHS Y CONSTANTES =====
-CONFIG_FILE = "config.json"
-PROCESSED_MESSAGES_FILE = "processed_messages.json"
 DEFAULT_CONFIG = {
     "li_at": "",
     "jsessionid": "",
