@@ -16,6 +16,7 @@ from functools import wraps
 from fastapi import FastAPI, HTTPException, Form
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 import httpx
 from linkedin_api import Linkedin
 
@@ -52,6 +53,17 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
+
+# ===== MODELOS PYDANTIC =====
+class ValidateCookiesRequest(BaseModel):
+    """Request model para POST /validate-cookies"""
+    li_at: str
+    jsessionid: str
+    bcookie: str = ""
+    lidc: str = ""
+    user_match_history: str = ""
+    aam_uuid: str = ""
+
 DEFAULT_CONFIG = {
     "li_at": "",
     "jsessionid": "",
@@ -115,6 +127,56 @@ def save_processed_messages(processed_ids: set) -> None:
 def clean_jsessionid(jsessionid: str) -> str:
     """Limpia caracteres extra de JSESSIONID (comillas, espacios)."""
     return jsessionid.strip().strip('"\'')
+
+
+def create_linkedin_client_with_cookies(li_at: str, jsessionid: str, bcookie: str = "", lidc: str = "", **kwargs):
+    """
+    Crea un cliente de LinkedIn con cookies y aplica el workaround necesario
+    para asegurar que se establezcan correctamente.
+    
+    :param li_at: Cookie li_at
+    :param jsessionid: Cookie JSESSIONID
+    :param bcookie: Cookie bcookie (opcional)
+    :param lidc: Cookie lidc (opcional)
+    :param kwargs: Otras cookies opcionales
+    :return: Cliente de LinkedIn configurado correctamente
+    """
+    jsessionid_clean = clean_jsessionid(jsessionid)
+    
+    # Preparar diccionario de cookies
+    cookies = {
+        'li_at': li_at,
+        'JSESSIONID': jsessionid_clean
+    }
+    
+    if bcookie:
+        cookies['bcookie'] = bcookie
+    if lidc:
+        cookies['lidc'] = lidc
+    if kwargs.get('user_match_history'):
+        cookies['UserMatchHistory'] = kwargs['user_match_history']
+    if kwargs.get('aam_uuid'):
+        cookies['aam_uuid'] = kwargs['aam_uuid']
+    
+    # Crear cliente
+    client = Linkedin(
+        username='',
+        password='',
+        authenticate=False,
+        cookies=cookies
+    )
+    
+    # WORKAROUND: Asegurar que cookies se establezcan correctamente
+    if hasattr(client, 'client') and hasattr(client.client, 'session'):
+        for key, value in cookies.items():
+            client.client.session.cookies.set(key, value)
+        
+        # Establecer csrf-token
+        csrf_token = jsessionid_clean.strip('"')
+        client.client.session.headers["csrf-token"] = csrf_token
+        logger.debug(f"✓ Cliente LinkedIn inicializado con {len(cookies)} cookies")
+    
+    return client
 
 
 def retry_on_429(max_retries: int = 3, base_delay: float = 1.0):
@@ -235,28 +297,12 @@ def validate_linkedin_cookies(li_at: str, jsessionid: str, bcookie: str = "", li
         logger.debug(f"Cookies: {list(cookies.keys())}")
         
         logger.info("Conectando a LinkedIn...")
-        client = Linkedin(
-            username='',
-            password='',
-            authenticate=False,
-            cookies=cookies
+        client = create_linkedin_client_with_cookies(
+            li_at, jsessionid_clean,
+            bcookie=bcookie,
+            lidc=lidc,
+            **kwargs
         )
-        
-        # WORKAROUND: linkedin-api tiene un bug en cómo asigna cookies
-        # Necesitamos asegurar que el csrf-token se establece correctamente
-        try:
-            # Acceder a session.cookies internos y asegurar que JSESSIONID está presente
-            if hasattr(client, 'client') and hasattr(client.client, 'session'):
-                # Agregar cookies manualmente al jar
-                for key, value in cookies.items():
-                    client.client.session.cookies.set(key, value)
-                
-                # Establecer csrf-token correctamente
-                jsessionid_for_csrf = jsessionid_clean.strip('"')
-                client.client.session.headers["csrf-token"] = jsessionid_for_csrf
-                logger.info(f"✓ CSRF Token establecido: {jsessionid_for_csrf[:30]}...")
-        except Exception as e:
-            logger.warning(f"⚠️  No se pudo establecer CSRF token manualmente: {e}")
         
         logger.info("Intentando get_user_profile()...")
         profile = client.get_user_profile()
@@ -538,7 +584,14 @@ async def admin_dashboard():
                     <small style="color: #666;">Si no lo configuras, la sincronización estará deshabilitada</small>
                 </div>
                 
-                <button type="submit">💾 Guardar & Validar</button>
+                <div style="display: flex; gap: 10px; margin-top: 20px;">
+                    <button type="submit" style="flex: 1; padding: 12px; background: #4caf50; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">
+                        💾 Guardar Configuración
+                    </button>
+                    <button type="button" onclick="validateCookies()" style="flex: 1; padding: 12px; background: #2196f3; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">
+                        ✓ Validar Cookies
+                    </button>
+                </div>
             </form>
             
             <script>
@@ -591,8 +644,52 @@ async def admin_dashboard():
                     if (extracted_cookies.user_match_history) document.getElementById('user_match_history').value = extracted_cookies.user_match_history;
                     if (extracted_cookies.aam_uuid) document.getElementById('aam_uuid').value = extracted_cookies.aam_uuid;
                     
-                    alert('✓ Cookies aplicadas al formulario. Ahora haz click en "Guardar & Validar"');
+                    alert('✓ Cookies aplicadas al formulario. Ahora haz click en "Guardar Configuración"');
                     document.getElementById('curl-result').style.display = 'none';
+                }}
+                
+                async function validateCookies() {{
+                    const li_at = document.getElementById('li_at').value.trim();
+                    const jsessionid = document.getElementById('jsessionid').value.trim();
+                    
+                    if (!li_at || !jsessionid) {{
+                        alert('❌ Debes ingresar li_at y JSESSIONID antes de validar');
+                        return;
+                    }}
+                    
+                    // Mostrar mensaje de carga
+                    const btn = event.target;
+                    const originalText = btn.innerHTML;
+                    btn.innerHTML = '⏳ Validando...';
+                    btn.disabled = true;
+                    
+                    try {{
+                        const response = await fetch('/validate-cookies', {{
+                            method: 'POST',
+                            headers: {{'Content-Type': 'application/json'}},
+                            body: JSON.stringify({{
+                                li_at: li_at,
+                                jsessionid: jsessionid,
+                                bcookie: document.getElementById('bcookie').value.trim(),
+                                lidc: document.getElementById('lidc').value.trim(),
+                                user_match_history: document.getElementById('user_match_history').value.trim(),
+                                aam_uuid: document.getElementById('aam_uuid').value.trim()
+                            }})
+                        }});
+                        
+                        const data = await response.json();
+                        
+                        if (data.success) {{
+                            alert('✅ Cookies validadas correctamente!\\n\\nUsuario: ' + (data.user_name || 'N/A'));
+                        }} else {{
+                            alert('❌ Validación fallida:\\n\\n' + data.detail);
+                        }}
+                    }} catch (error) {{
+                        alert('❌ Error durante la validación: ' + error);
+                    }} finally {{
+                        btn.innerHTML = originalText;
+                        btn.disabled = false;
+                    }}
                 }}
             </script>
             
@@ -616,7 +713,15 @@ async def save_config_endpoint(
     aam_uuid: str = Form(default=""),
     n8n_webhook_url: str = Form(default="")
 ):
-    """Endpoint POST para guardar configuración con validación."""
+    """Endpoint POST para guardar configuración. 
+    
+    ⚠️  IMPORTANTE: NO valida contra LinkedIn en este endpoint.
+    Razón: Si válidas aquí, LinkedIn detecta múltiples conexiones 
+    desde diferentes IPs (tu navegador + servidor) e invalida las cookies 
+    automáticamente por seguridad.
+    
+    Solución: Solo guardar, NO validar.
+    """
     logger.info("=== SOLICITUD DE GUARDADO DE CONFIGURACIÓN ===")
     
     # Limpiar inputs
@@ -628,7 +733,7 @@ async def save_config_endpoint(
     aam_uuid = aam_uuid.strip()
     n8n_webhook_url = n8n_webhook_url.strip()
     
-    # GUARDAR PRIMERO - independiente de validación
+    # GUARDAR - SIN VALIDAR CONTRA LINKEDIN
     config_to_save = {
         "li_at": li_at,
         "jsessionid": jsessionid,
@@ -638,10 +743,10 @@ async def save_config_endpoint(
         "aam_uuid": aam_uuid,
         "n8n_webhook_url": n8n_webhook_url if n8n_webhook_url else "",
         "last_sync": datetime.now().isoformat(),
-        "validation_status": "pending"
+        "validation_status": "unverified"  # Cambiar a "unverified" en lugar de "pending"
     }
     save_config(config_to_save)
-    logger.info("✓ Datos guardados en config (pendiente validación)")
+    logger.info("✓ Datos guardados en config (sin validación)")
     
     # Loguear qué cookies fueron provistas
     cookies_provided = []
@@ -653,79 +758,34 @@ async def save_config_endpoint(
     if aam_uuid: cookies_provided.append("aam_uuid")
     logger.info(f"Cookies proporcionadas: {', '.join(cookies_provided)}")
     
-    # VALIDAR DESPUÉS
-    logger.info("Validando credenciales de LinkedIn...")
-    is_valid, validation_msg = validate_linkedin_cookies(
-        li_at, jsessionid, 
-        bcookie=bcookie, 
-        lidc=lidc,
-        user_match_history=user_match_history,
-        aam_uuid=aam_uuid
-    )
-    
-    if not is_valid:
-        logger.error(f"Validación fallida: {validation_msg}")
-        logger.info("⚠️  Los datos se guardaron pero la validación falló")
-        
-        # Marcar config como inválida
-        config_to_save["validation_status"] = "failed"
-        config_to_save["validation_error"] = validation_msg
-        save_config(config_to_save)
-        
-        # Mostrar error pero permitir revisión de datos guardados
-        return HTMLResponse(
-            f"""
-            <html>
-            <head>
-                <style>
-                    body {{ font-family: sans-serif; margin: 50px; }}
-                    .error {{ color: #d32f2f; margin: 20px 0; }}
-                    .warning {{ background: #fff3cd; border: 1px solid #ffc107; padding: 15px; border-radius: 4px; margin: 20px 0; }}
-                    a {{ color: #0a66c2; text-decoration: none; }}
-                    a:hover {{ text-decoration: underline; }}
-                </style>
-            </head>
-            <body>
-                <h1 class="error">❌ Validación Fallida</h1>
-                <div class="warning">
-                    <strong>⚠️  Los datos se han guardado, pero la validación falló:</strong><br><br>
-                    {validation_msg}
-                </div>
-                <p>Por favor, verifica que tus cookies sean correctas y aún sean válidas.</p>
-                <p style="color: #666; font-size: 14px;">
-                    💡 Puedes ver los valores guardados en el formulario. Intenta actualizar las cookies y vuelve a intentar.
-                </p>
-                <p><a href="/admin">← Volver al dashboard</a></p>
-            </body>
-            </html>
-            """,
-            status_code=400
-        )
-    
-    # VALIDACIÓN EXITOSA - Marcar como válida
-    config_to_save["validation_status"] = "valid"
-    config_to_save.pop("validation_error", None)
-    save_config(config_to_save)
-    
-    logger.info("✓ Configuración guardada Y validada exitosamente")
-    logger.info(f"  - LinkedIn cookies: ✓ validadas")
-    logger.info(f"  - n8n webhook: {'configurado' if n8n_webhook_url else 'no configurado (sincronización deshabilitada)'}")
-    
-    # Redirigir al dashboard
+    # Mostrar mensaje de éxito
     return HTMLResponse(
         """
         <html>
         <head>
             <style>
                 body { font-family: sans-serif; margin: 50px; }
-                .success { color: #388e3c; }
+                .success { color: #388e3c; background: #f1f8e9; padding: 20px; border-radius: 4px; }
+                .info { background: #e3f2fd; border: 1px solid #2196f3; padding: 15px; border-radius: 4px; margin: 20px 0; }
                 a { color: #0a66c2; text-decoration: none; }
                 a:hover { text-decoration: underline; }
+                .warning { color: #f57c00; margin: 10px 0; }
             </style>
         </head>
         <body>
-            <h1 class="success">✅ Configuración Guardada y Validada</h1>
-            <p>Las cookies fueron validadas correctamente y guardadas.</p>
+            <h1 class="success">✅ Configuración Guardada</h1>
+            <div class="info">
+                <strong>Las cookies han sido guardadas correctamente.</strong><br><br>
+                <strong class="warning">⚠️  Nota importante:</strong><br>
+                No se validan contra LinkedIn en este momento para evitar que 
+                LinkedIn invalide las cookies (detecta múltiples IPs usando las mismas cookies).
+                <br><br>
+                <strong>¿Cómo verificar que funcionan?</strong><br>
+                1. Cierra navegador completamente<br>
+                2. Vuelve a iniciar sesión en LinkedIn (nuevas cookies)<br>
+                3. Extrae nuevamente las cookies en el admin<br>
+                4. O usa el endpoint GET /messages para testear directamente
+            </div>
             <p><a href="/admin">← Volver al dashboard</a></p>
         </body>
         </html>
@@ -906,7 +966,14 @@ async def sync_messages():
     try:
         # Conectar a LinkedIn
         logger.info("Conectando a LinkedIn...")
-        client = Linkedin(config["li_at"], clean_jsessionid(config["jsessionid"]))
+        client = create_linkedin_client_with_cookies(
+            config["li_at"],
+            config["jsessionid"],
+            bcookie=config.get("bcookie", ""),
+            lidc=config.get("lidc", ""),
+            user_match_history=config.get("user_match_history", ""),
+            aam_uuid=config.get("aam_uuid", "")
+        )
         
         # Obtener conversaciones (solo metadatos)
         logger.info("Obteniendo conversaciones...")
@@ -1250,6 +1317,219 @@ async def get_logs_json(lines: int = 100):
     except Exception as e:
         logger.error(f"Error al leer logs JSON: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ===== ENDPOINTS DE VALIDACIÓN Y PRUEBA =====
+@app.post("/validate-cookies")
+async def validate_cookies_endpoint(request: ValidateCookiesRequest):
+    """
+    Valida cookies contra LinkedIn.
+    
+    Endpoint separado de POST /admin para permitir validación bajo demanda
+    sin invalidar las cookies (no hay múltiples IPs detectadas si el usuario
+    cierra navegador antes de validar).
+    
+    Request JSON:
+    {
+        "li_at": "...",
+        "jsessionid": "...",
+        "bcookie": "...",
+        "lidc": "...",
+        "user_match_history": "...",
+        "aam_uuid": "..."
+    }
+    
+    Returns:
+    {
+        "success": true/false,
+        "user_name": "Nombre Usuario" (si success=true),
+        "detail": "error message" (si success=false)
+    }
+    """
+    logger.info("=== ENDPOINT /validate-cookies - Validación bajo demanda ===")
+    
+    try:
+        # Extraer valores del request
+        li_at = request.li_at.strip()
+        jsessionid = request.jsessionid.strip()
+        bcookie = request.bcookie.strip()
+        lidc = request.lidc.strip()
+        user_match_history = request.user_match_history.strip()
+        aam_uuid = request.aam_uuid.strip()
+        
+        # Validar requeridos
+        if not li_at or not jsessionid:
+            logger.warning("Validación sin cookies requeridas")
+            return {
+                "success": False,
+                "detail": "li_at y jsessionid son requeridas"
+            }
+        
+        logger.info(f"Validando cookies: li_at ({len(li_at)} chars), jsessionid ({len(jsessionid)} chars)")
+        
+        # Usar función de validación
+        is_valid, validation_msg = validate_linkedin_cookies(
+            li_at, jsessionid,
+            bcookie=bcookie,
+            lidc=lidc,
+            user_match_history=user_match_history,
+            aam_uuid=aam_uuid
+        )
+        
+        if is_valid:
+            logger.info("✓ Validación exitosa")
+            
+            # Obtener nombre del usuario
+            try:
+                client = create_linkedin_client_with_cookies(
+                    li_at, jsessionid,
+                    bcookie=bcookie,
+                    lidc=lidc,
+                    user_match_history=user_match_history,
+                    aam_uuid=aam_uuid
+                )
+                profile = client.get_user_profile()
+                user_name = profile.get('miniProfile', {}).get('firstName', 'Unknown')
+            except:
+                user_name = "Unknown"
+            
+            return {
+                "success": True,
+                "user_name": user_name,
+                "detail": validation_msg
+            }
+        else:
+            logger.error(f"Validación fallida: {validation_msg}")
+            return {
+                "success": False,
+                "detail": validation_msg
+            }
+            
+    except Exception as e:
+        logger.error(f"Error en /validate-cookies: {type(e).__name__}: {e}")
+        return {
+            "success": False,
+            "detail": f"{type(e).__name__}: {str(e)[:200]}"
+        }
+
+
+@app.get("/messages")
+async def get_messages():
+    """
+    Obtiene todos los mensajes/conversaciones de LinkedIn.
+    
+    **NOTA:** Esto es un endpoint de PRUEBA para verificar que la API funciona.
+    Requiere cookies configuradas en /admin.
+    
+    Retorna:
+    - conversations: Lista de conversaciones con metadatos
+    - total: Total de conversaciones obtenidas
+    - status: "success" o "error"
+    """
+    logger.info("=== ENDPOINT /messages - Obteniendo conversaciones ===")
+    
+    try:
+        config = load_config()
+        
+        # Validar configuración
+        if not config.get("li_at") or not config.get("jsessionid"):
+            logger.warning("Cookies no configuradas")
+            return {
+                "status": "error",
+                "detail": "Cookies no configuradas. Configúralas en /admin primero.",
+                "conversations": [],
+                "total": 0
+            }
+        
+        logger.info("Creando cliente LinkedIn...")
+        client = create_linkedin_client_with_cookies(
+            config["li_at"],
+            config["jsessionid"],
+            bcookie=config.get("bcookie", ""),
+            lidc=config.get("lidc", ""),
+            user_match_history=config.get("user_match_history", ""),
+            aam_uuid=config.get("aam_uuid", "")
+        )
+        
+        logger.info("Obteniendo conversaciones...")
+        conversations = client.get_conversations()
+        
+        if not conversations:
+            logger.info("No hay conversaciones")
+            return {
+                "status": "success",
+                "conversations": [],
+                "total": 0,
+                "message": "No hay conversaciones en LinkedIn"
+            }
+        
+        logger.info(f"Encontradas {len(conversations)} conversaciones")
+        
+        # Procesar conversaciones
+        result_conversations = []
+        for conv in conversations[:10]:  # Límite de 10 para prueba
+            try:
+                conv_id = conv.get("conversation_urn_id") or conv.get("urn_id", "N/A")
+                participants = conv.get("participants", [])
+                participant_name = participants[0].get("name", "Unknown") if participants else "Unknown"
+                subject = conv.get("subject", "Sin asunto")
+                
+                logger.info(f"Procesando conversación con {participant_name}")
+                
+                # Intentar obtener detalles
+                try:
+                    conv_details = client.get_conversation(conv_id)
+                    elements = conv_details.get("elements", [])
+                    
+                    result_conversations.append({
+                        "id": conv_id,
+                        "participant": participant_name,
+                        "subject": subject,
+                        "message_count": len(elements),
+                        "messages": [
+                            {
+                                "from": msg.get("from", {}).get("name", "Unknown"),
+                                "body": msg.get("body", "")[:200],  # Primeros 200 chars
+                                "timestamp": msg.get("createdAt")
+                            }
+                            for msg in elements[:5]  # Últimos 5 mensajes
+                        ]
+                    })
+                except Exception as e:
+                    logger.warning(f"No se pudo obtener detalles de conversación {conv_id}: {e}")
+                    result_conversations.append({
+                        "id": conv_id,
+                        "participant": participant_name,
+                        "subject": subject,
+                        "error": str(e)
+                    })
+                    
+            except Exception as e:
+                logger.error(f"Error procesando conversación: {e}")
+                continue
+        
+        logger.info(f"✓ Devolviendo {len(result_conversations)} conversaciones")
+        
+        return {
+            "status": "success",
+            "conversations": result_conversations,
+            "total": len(conversations),
+            "processed": len(result_conversations),
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"✗ Error en /messages: {type(e).__name__}: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        
+        return {
+            "status": "error",
+            "detail": str(e),
+            "error_type": type(e).__name__,
+            "conversations": [],
+            "total": 0
+        }
 
 
 if __name__ == "__main__":
