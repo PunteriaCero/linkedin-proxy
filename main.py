@@ -172,45 +172,121 @@ def retry_on_429(max_retries: int = 3, base_delay: float = 1.0):
 # ===== VALIDACIÓN DE LINKEDIN =====
 def validate_linkedin_cookies(li_at: str, jsessionid: str) -> tuple[bool, str]:
     """
-    Valida que las cookies sean correctas llamando a get_profile().
+    Valida que las cookies sean correctas.
+    Realiza validaciones previas y usa endpoints alternativos.
     Retorna (is_valid, error_message)
     """
-    logger.info("Iniciando validación de cookies de LinkedIn...")
+    logger.info("=== INICIANDO VALIDACIÓN DE COOKIES ===")
     
     if not li_at or not jsessionid:
         return False, "li_at y JSESSIONID no pueden estar vacíos"
     
+    # 1. VALIDAR ESTRUCTURA
+    logger.info(f"Validando estructura: li_at ({len(li_at)} chars), JSESSIONID ({len(jsessionid)} chars)")
+    
+    if len(li_at) < 60:
+        logger.error(f"li_at muy corta (mínimo 60 caracteres, tienes {len(li_at)})")
+        return False, f"li_at cookie incompleta o incorrecta (tienes {len(li_at)} caracteres, se esperan 60+)"
+    
+    if len(jsessionid) < 20:
+        logger.error(f"JSESSIONID muy corta (mínimo 20 caracteres, tienes {len(jsessionid)})")
+        return False, f"JSESSIONID incompleta o incorrecta (tienes {len(jsessionid)} caracteres, se esperan 20+)"
+    
+    logger.info("✓ Estructura de cookies válida")
+    
     try:
         # Limpiar JSESSIONID
         jsessionid_clean = clean_jsessionid(jsessionid)
+        logger.info("Conectando a LinkedIn...")
         
-        # Intentar conexión
-        client = Linkedin(li_at, jsessionid_clean)
+        # Intentar conexión con timeout
+        client = Linkedin(li_at, jsessionid_clean, timeout=10)
+        
+        # 2. ENDPOINT ALTERNATIVO PRIMERO (menos sensible a CHALLENGE)
+        logger.info("Intentando endpoint alternativo: get_conversations()...")
+        try:
+            conversations = client.get_conversations(limit=1)
+            logger.info(f"✓ Validación exitosa vía conversations (encontradas {len(conversations) if conversations else 0})")
+            return True, "Cookies válidas (validadas vía conversations)"
+        except Exception as conv_error:
+            conv_error_str = str(conv_error)
+            logger.warning(f"get_conversations() falló: {conv_error_str}")
+            
+            # Si conversation también falla con CHALLENGE, probablemente sea real
+            if "CHALLENGE" in conv_error_str:
+                logger.error("CHALLENGE detectado en endpoint alternativo también")
+                raise Exception(conv_error_str)
+        
+        # 3. ENDPOINT PRINCIPAL (si alternativo no disponible)
+        logger.info("Intentando endpoint principal: get_profile()...")
         profile = client.get_profile()
         
         if profile:
-            logger.info(f"✓ Validación exitosa. Perfil: {profile.get('firstName', 'Unknown')}")
+            name = profile.get('firstName', 'Unknown')
+            logger.info(f"✓ Validación exitosa. Perfil: {name}")
             return True, "Cookies válidas"
         else:
-            return False, "Perfil vacío - posible cookie expirada"
+            logger.warning("Perfil vacío retornado")
+            return False, "Perfil vacío - posible cookie expirada o datos de cuenta privada"
     
     except Exception as e:
         error_msg = str(e)
+        error_lower = error_msg.lower()
         logger.error(f"✗ Error de validación: {error_msg}")
         
-        # Detectar errores comunes
-        if "401" in error_msg or "Unauthorized" in error_msg:
-            return False, "Cookie expirada o inválida (401)"
+        # DETECTAR Y CLASIFICAR ERRORES
+        
+        if "challenge" in error_lower:
+            logger.error(">>> CHALLENGE DETECTADO <<<")
+            return False, (
+                "LinkedIn requiere verificación adicional (CHALLENGE). "
+                "Esto ocurre cuando LinkedIn detecta actividad inusual. "
+                "Posibles soluciones:\n"
+                "1) Abre LinkedIn en tu navegador y completa cualquier verificación\n"
+                "2) Si te pide código de verificación (email/teléfono), complétalo\n"
+                "3) Espera 5-10 minutos\n"
+                "4) Regenera las cookies\n"
+                "5) Intenta nuevamente\n\n"
+                "Si el problema persiste, LinkedIn puede haber bloqueado tu IP temporalmente."
+            )
+        
+        elif "401" in error_msg or "unauthorized" in error_lower:
+            logger.error(">>> 401 UNAUTHORIZED <<<")
+            return False, "Cookie expirada o inválida (Error 401). Intenta regenerar las cookies."
+        
         elif "403" in error_msg:
-            return False, "Acceso denegado (403) - verifica permisos"
-        elif "CHALLENGE" in error_msg or "challenge" in error_msg.lower():
-            return False, "LinkedIn requiere verificación adicional (CHALLENGE). Intenta regenerar las cookies."
-        elif "JSESSIONID" in error_msg:
-            return False, "Estructura de JSESSIONID incorrecta"
+            logger.error(">>> 403 FORBIDDEN <<<")
+            return False, "Acceso denegado (Error 403). Verifica permisos de cuenta o bloqueo de LinkedIn."
+        
+        elif "jsessionid" in error_lower:
+            logger.error(">>> JSESSIONID ERROR <<<")
+            return False, "Estructura de JSESSIONID incorrecta. Cópiala nuevamente desde DevTools."
+        
         elif "429" in error_msg:
-            return False, "Rate limit alcanzado - intenta más tarde"
+            logger.error(">>> 429 RATE LIMIT <<<")
+            return False, "Rate limit alcanzado (Error 429). Intenta más tarde."
+        
+        elif "connection" in error_lower or "timeout" in error_lower:
+            logger.error(">>> CONNECTION ERROR <<<")
+            return False, (
+                "Error de conexión a LinkedIn. Posibles causas:\n"
+                "1) Problema de red\n"
+                "2) LinkedIn no disponible\n"
+                "3) Bloqueo de IP en tu región\n"
+                "4) Timeout (LinkedIn responde lento)\n"
+                "Intenta de nuevo más tarde."
+            )
+        
         else:
-            return False, f"Error de conexión: {error_msg}"
+            logger.error(f">>> ERROR DESCONOCIDO: {error_msg} <<<")
+            return False, (
+                f"Error de conexión desconocido: {error_msg[:100]}\n"
+                "Recomendaciones:\n"
+                "1) Verifica que ambas cookies sean correctas\n"
+                "2) Asegúrate de copiarlas completamente\n"
+                "3) Intenta regenerarlas desde LinkedIn\n"
+                "4) Si persiste, contacta con soporte"
+            )
 
 
 # ===== ENDPOINTS =====
