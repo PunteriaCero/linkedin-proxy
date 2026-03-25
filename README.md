@@ -1,5 +1,9 @@
 # LinkedIn-n8n Gateway 🔗
 
+[![Tests](https://github.com/PunteriaCero/linkedin-proxy/actions/workflows/tests.yml/badge.svg)](https://github.com/PunteriaCero/linkedin-proxy/actions/workflows/tests.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+
 Microservicio en FastAPI que sincroniza mensajes de LinkedIn hacia n8n usando **cookies de sesión** (sin email/password).
 
 ## 📋 Características
@@ -226,6 +230,28 @@ tail -f gateway.log
 2024-03-20T10:30:03 - INFO - Respuesta de n8n: 200
 2024-03-20T10:30:03 - INFO - ✓ Sincronización completada exitosamente
 ```
+
+---
+
+## 🤖 GitHub Actions (CI/CD)
+
+Los tests se ejecutan automáticamente:
+
+### ✅ Ejecuciones Automáticas
+- **En cada push** a `main` o `master`
+- **En cada Pull Request**
+- **Manualmente** desde la pestaña "Actions"
+
+### 🔄 Ver Estado de Tests
+
+1. Ve a [Actions](https://github.com/PunteriaCero/linkedin-proxy/actions)
+2. Selecciona el workflow "Tests"
+3. Haz click en el último run
+4. Ver detalles y logs
+
+### 📊 Badge de Estado
+
+El badge en el README muestra el estado actual de los tests.
 
 ---
 
