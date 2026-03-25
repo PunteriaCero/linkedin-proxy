@@ -247,10 +247,25 @@ def validate_linkedin_cookies(li_at: str, jsessionid: str, bcookie: str = "", li
     :param lidc: Cookie lidc (opcional pero recomendada)
     :param kwargs: Otras cookies opcionales (user_match_history, aam_uuid, etc.)
     """
+    is_valid, error_msg, _ = validate_linkedin_cookies_with_profile(li_at, jsessionid, bcookie, lidc, **kwargs)
+    return is_valid, error_msg
+
+
+def validate_linkedin_cookies_with_profile(li_at: str, jsessionid: str, bcookie: str = "", lidc: str = "", **kwargs) -> tuple[bool, str, dict]:
+    """
+    Valida que las cookies sean correctas y retorna el perfil del usuario.
+    Retorna (is_valid, error_message, profile_data)
+    
+    :param li_at: Cookie li_at (requerida)
+    :param jsessionid: Cookie JSESSIONID (requerida)
+    :param bcookie: Cookie bcookie (opcional pero recomendada)
+    :param lidc: Cookie lidc (opcional pero recomendada)
+    :param kwargs: Otras cookies opcionales (user_match_history, aam_uuid, etc.)
+    """
     logger.info("=== INICIANDO VALIDACIÓN DE COOKIES ===")
     
     if not li_at or not jsessionid:
-        return False, "li_at y JSESSIONID no pueden estar vacíos"
+        return False, "li_at y JSESSIONID no pueden estar vacíos", {}
     
     # 1. VALIDAR ESTRUCTURA
     logger.info(f"Validando estructura: li_at ({len(li_at)} chars), JSESSIONID ({len(jsessionid)} chars)")
@@ -258,11 +273,11 @@ def validate_linkedin_cookies(li_at: str, jsessionid: str, bcookie: str = "", li
     
     if len(li_at) < 60:
         logger.error(f"li_at muy corta (mínimo 60 caracteres, tienes {len(li_at)})")
-        return False, f"li_at cookie incompleta (tienes {len(li_at)} caracteres, se esperan 60+)"
+        return False, f"li_at cookie incompleta (tienes {len(li_at)} caracteres, se esperan 60+)", {}
     
     if len(jsessionid) < 20:
         logger.error(f"JSESSIONID muy corta (mínimo 20 caracteres, tienes {len(jsessionid)})")
-        return False, f"JSESSIONID incompleta (tienes {len(jsessionid)} caracteres, se esperan 20+)"
+        return False, f"JSESSIONID incompleta (tienes {len(jsessionid)} caracteres, se esperan 20+)", {}
     
     logger.info("✓ Estructura de cookies válida")
     
@@ -307,17 +322,18 @@ def validate_linkedin_cookies(li_at: str, jsessionid: str, bcookie: str = "", li
         logger.info("Intentando get_user_profile()...")
         profile = client.get_user_profile()
         
-        if profile and profile.get('firstName'):
-            name = profile.get('firstName', 'Unknown')
-            logger.info(f"✓ Validación exitosa. Perfil: {name}")
-            return True, "Cookies válidas"
-        elif profile:
-            logger.info("✓ Perfil obtenido (sin firstName)")
+        if profile:
+            # Obtener nombre del perfil
+            first_name = profile.get('miniProfile', {}).get('firstName', 'Unknown')
+            last_name = profile.get('miniProfile', {}).get('lastName', '')
+            full_name = f"{first_name} {last_name}".strip() if first_name != 'Unknown' else 'Unknown'
+            
+            logger.info(f"✓ Validación exitosa. Perfil: {full_name}")
             logger.debug(f"Perfil data: {profile}")
-            return True, "Cookies válidas"
+            return True, "Cookies válidas", {'name': full_name, 'profile': profile}
         else:
             logger.warning("Perfil vacío retornado")
-            return False, "Perfil vacío - posible cookie expirada"
+            return False, "Perfil vacío - posible cookie expirada", {}
     
     except Exception as e:
         error_msg = str(e)
@@ -337,30 +353,30 @@ def validate_linkedin_cookies(li_at: str, jsessionid: str, bcookie: str = "", li
                 "3) LinkedIn bloqueó el acceso\n"
                 "4) Cookies obtenidas desde navegador incógnito\n\n"
                 "Solución: Regenera las cookies desde LinkedIn en navegador normal"
-            )
+            ), {}
         
         elif "challenge" in error_lower:
             logger.error(">>> CHALLENGE DETECTADO <<<")
             return False, (
                 "LinkedIn requiere verificación adicional (CHALLENGE). "
                 "Abre LinkedIn en navegador, completa verificación, luego regenera cookies."
-            )
+            ), {}
         
         elif "401" in error_msg or "unauthorized" in error_lower:
             logger.error(">>> 401 UNAUTHORIZED <<<")
-            return False, "Cookies expiradas o inválidas (401). Regenera desde LinkedIn."
+            return False, "Cookies expiradas o inválidas (401). Regenera desde LinkedIn.", {}
         
         elif "403" in error_msg:
             logger.error(">>> 403 FORBIDDEN <<<")
-            return False, "Acceso denegado (403). Verifica permisos de cuenta o bloqueos."
+            return False, "Acceso denegado (403). Verifica permisos de cuenta o bloqueos.", {}
         
         elif "jsessionid" in error_lower:
             logger.error(">>> JSESSIONID ERROR <<<")
-            return False, "Estructura de JSESSIONID incorrecta. Obtén nuevamente desde DevTools."
+            return False, "Estructura de JSESSIONID incorrecta. Obtén nuevamente desde DevTools.", {}
         
         elif "429" in error_msg:
             logger.error(">>> 429 RATE LIMIT <<<")
-            return False, "Rate limit alcanzado. Intenta más tarde."
+            return False, "Rate limit alcanzado. Intenta más tarde.", {}
         
         elif "connection" in error_lower or "timeout" in error_lower or "connect" in error_lower:
             logger.error(">>> CONNECTION ERROR <<<")
@@ -371,7 +387,7 @@ def validate_linkedin_cookies(li_at: str, jsessionid: str, bcookie: str = "", li
                 "3) Bloqueo de IP\n"
                 "4) Cookies expiradas\n\n"
                 "Intenta: Verifica conexión, abre LinkedIn, regenera cookies"
-            )
+            ), {}
         
         else:
             logger.error(f">>> ERROR DESCONOCIDO: {error_msg[:100]} <<<")
@@ -381,7 +397,7 @@ def validate_linkedin_cookies(li_at: str, jsessionid: str, bcookie: str = "", li
                 "1) Verifica ambas cookies son correctas\n"
                 "2) Obtenlas completamente desde DevTools\n"
                 "3) Regenera las cookies desde LinkedIn"
-            )
+            ), {}
 
 
 # ===== ENDPOINTS =====
@@ -1367,8 +1383,8 @@ async def validate_cookies_endpoint(request: ValidateCookiesRequest):
         
         logger.info(f"Validando cookies: li_at ({len(li_at)} chars), jsessionid ({len(jsessionid)} chars)")
         
-        # Usar función de validación
-        is_valid, validation_msg = validate_linkedin_cookies(
+        # Usar función de validación que retorna el perfil
+        is_valid, validation_msg, profile_data = validate_linkedin_cookies_with_profile(
             li_at, jsessionid,
             bcookie=bcookie,
             lidc=lidc,
@@ -1378,20 +1394,7 @@ async def validate_cookies_endpoint(request: ValidateCookiesRequest):
         
         if is_valid:
             logger.info("✓ Validación exitosa")
-            
-            # Obtener nombre del usuario
-            try:
-                client = create_linkedin_client_with_cookies(
-                    li_at, jsessionid,
-                    bcookie=bcookie,
-                    lidc=lidc,
-                    user_match_history=user_match_history,
-                    aam_uuid=aam_uuid
-                )
-                profile = client.get_user_profile()
-                user_name = profile.get('miniProfile', {}).get('firstName', 'Unknown')
-            except:
-                user_name = "Unknown"
+            user_name = profile_data.get('name', 'Unknown')
             
             return {
                 "success": True,
