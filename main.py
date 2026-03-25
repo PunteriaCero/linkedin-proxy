@@ -173,6 +173,8 @@ def retry_on_429(max_retries: int = 3, base_delay: float = 1.0):
 def validate_linkedin_cookies(li_at: str, jsessionid: str) -> tuple[bool, str]:
     """
     Valida que las cookies sean correctas.
+    Nota: El cliente linkedin-api establece automáticamente el header 'csrf-token'
+    a partir del valor de JSESSIONID cuando se pasan las cookies.
     Retorna (is_valid, error_message)
     """
     logger.info("=== INICIANDO VALIDACIÓN DE COOKIES ===")
@@ -212,6 +214,10 @@ def validate_linkedin_cookies(li_at: str, jsessionid: str) -> tuple[bool, str]:
             cookies=cookies
         )
         
+        # El cliente debe haber establecido csrf-token automáticamente
+        csrf_token = client.client.session.headers.get('csrf-token', 'NO ESTABLECIDO')
+        logger.info(f"CSRF Token establecido: {csrf_token[:20]}..." if csrf_token != 'NO ESTABLECIDO' else "CSRF Token establecido: NO ESTABLECIDO")
+        
         logger.info("Intentando get_profile()...")
         profile = client.get_profile()
         
@@ -237,13 +243,21 @@ def validate_linkedin_cookies(li_at: str, jsessionid: str) -> tuple[bool, str]:
         if "jsondecodeerror" in error_lower or "expecting value" in error_lower:
             logger.error(">>> JSON DECODE ERROR (LinkedIn rechazó cookies) <<<")
             return False, (
-                "LinkedIn rechazó las cookies (respuesta vacía). "
-                "Posibles causas:\n"
-                "1) Cookies expiradas (24-48 horas máximo)\n"
-                "2) Cookies inválidas\n"
-                "3) LinkedIn bloqueó el acceso\n"
-                "4) Cookies obtenidas desde navegador incógnito\n\n"
-                "Solución: Regenera las cookies desde LinkedIn en navegador normal"
+                "LinkedIn rechazó las cookies (respuesta vacía / HTTP 403). "
+                "Causas posibles:\n"
+                "1) Cookies expiradas (máximo 24-48 horas)\n"
+                "2) Cookies incompletas o mal formadas\n"
+                "3) LinkedIn bloqueó tu IP temporalmente\n"
+                "4) Cookies obtenidas en modo incógnito/privado\n"
+                "5) Tu cuenta requiere verificación adicional\n"
+                "6) LinkedIn cambió recientemente su estructura\n\n"
+                "Soluciones a intentar:\n"
+                "• Abre LinkedIn en navegador NORMAL (no incógnito)\n"
+                "• Completa cualquier verificación que LinkedIn solicite\n"
+                "• Copia exactamente ambas cookies sin espacios ni caracteres extras\n"
+                "• Espera 10-15 minutos y regenera cookies\n"
+                "• Si tienes VPN, desactívala durante la regeneración\n"
+                "• Intenta en navegador diferente (Chrome, Firefox, Safari)"
             )
         
         elif "challenge" in error_lower:
