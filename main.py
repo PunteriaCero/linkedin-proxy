@@ -226,18 +226,42 @@ async def admin_dashboard():
     """Dashboard admin para configuración."""
     config = load_config()
     
-    # Mostrar estado de validación
+    # Mostrar estado de validación basado en config guardada
     validation_status = ""
+    status_flag = config.get("validation_status", "unknown")
+    
     if config.get("li_at") and config.get("jsessionid"):
-        is_valid, msg = validate_linkedin_cookies(
-            config["li_at"],
-            config["jsessionid"]
-        )
-        validation_status = f"""
-        <div style="border: 2px solid {'green' if is_valid else 'red'}; padding: 10px; margin: 10px 0; border-radius: 4px;">
-            <strong>Estado de validación:</strong> {msg}
-        </div>
-        """
+        # Mostrar estado del último intento de validación
+        if status_flag == "valid":
+            validation_status = """
+            <div style="border: 2px solid #4caf50; background: #f1f8e9; padding: 15px; margin: 10px 0; border-radius: 4px;">
+                <strong style="color: #2e7d32;">✅ Validación: EXITOSA</strong>
+                <p style="margin: 5px 0; color: #558b2f; font-size: 14px;">Las cookies están configuradas y validadas.</p>
+            </div>
+            """
+        elif status_flag == "failed":
+            error_msg = config.get("validation_error", "Error desconocido")
+            validation_status = f"""
+            <div style="border: 2px solid #f44336; background: #ffebee; padding: 15px; margin: 10px 0; border-radius: 4px;">
+                <strong style="color: #c62828;">❌ Validación: FALLIDA</strong>
+                <p style="margin: 5px 0; color: #b71c1c; font-size: 14px;">{error_msg}</p>
+                <p style="margin: 5px 0; color: #666; font-size: 12px;">💡 Intenta actualizar las cookies y validar nuevamente.</p>
+            </div>
+            """
+        elif status_flag == "pending":
+            validation_status = """
+            <div style="border: 2px solid #ff9800; background: #fff3e0; padding: 15px; margin: 10px 0; border-radius: 4px;">
+                <strong style="color: #e65100;">⏳ Validación: PENDIENTE</strong>
+                <p style="margin: 5px 0; color: #bf360c; font-size: 14px;">Los datos se guardaron pero aún no se validaron.</p>
+            </div>
+            """
+        else:
+            validation_status = """
+            <div style="border: 2px solid #9c27b0; background: #f3e5f5; padding: 15px; margin: 10px 0; border-radius: 4px;">
+                <strong style="color: #6a1b9a;">ℹ️ Validación: NO REALIZADA</strong>
+                <p style="margin: 5px 0; color: #7b1fa2; font-size: 14px;">Ingresa cookies para comenzar.</p>
+            </div>
+            """
     
     html = f"""
     <!DOCTYPE html>
@@ -372,27 +396,54 @@ async def save_config_endpoint(
     jsessionid = clean_jsessionid(jsessionid)
     n8n_webhook_url = n8n_webhook_url.strip()
     
-    # Validar LinkedIn
+    # GUARDAR PRIMERO - independiente de validación
+    # Esto permite que el usuario vea qué valores estaba intentando guardar
+    config_to_save = {
+        "li_at": li_at,
+        "jsessionid": jsessionid,
+        "n8n_webhook_url": n8n_webhook_url if n8n_webhook_url else "",
+        "last_sync": datetime.now().isoformat(),
+        "validation_status": "pending"  # Marcar como pendiente validación
+    }
+    save_config(config_to_save)
+    logger.info("✓ Datos guardados en config (pendiente validación)")
+    
+    # VALIDAR DESPUÉS
     logger.info("Validando credenciales de LinkedIn...")
     is_valid, validation_msg = validate_linkedin_cookies(li_at, jsessionid)
     
     if not is_valid:
         logger.error(f"Validación fallida: {validation_msg}")
-        # Redirigir al dashboard con error
+        logger.info("⚠️  Los datos se guardaron pero la validación falló")
+        
+        # Marcar config como inválida
+        config_to_save["validation_status"] = "failed"
+        config_to_save["validation_error"] = validation_msg
+        save_config(config_to_save)
+        
+        # Mostrar error pero permitir revisión de datos guardados
         return HTMLResponse(
             f"""
             <html>
             <head>
                 <style>
                     body {{ font-family: sans-serif; margin: 50px; }}
-                    .error {{ color: #d32f2f; }}
-                    a {{ color: #0a66c2; }}
+                    .error {{ color: #d32f2f; margin: 20px 0; }}
+                    .warning {{ background: #fff3cd; border: 1px solid #ffc107; padding: 15px; border-radius: 4px; margin: 20px 0; }}
+                    a {{ color: #0a66c2; text-decoration: none; }}
+                    a:hover {{ text-decoration: underline; }}
                 </style>
             </head>
             <body>
-                <h1 class="error">❌ Error de Validación</h1>
-                <p><strong>{validation_msg}</strong></p>
+                <h1 class="error">❌ Validación Fallida</h1>
+                <div class="warning">
+                    <strong>⚠️  Los datos se han guardado, pero la validación falló:</strong><br><br>
+                    {validation_msg}
+                </div>
                 <p>Por favor, verifica que tus cookies sean correctas y aún sean válidas.</p>
+                <p style="color: #666; font-size: 14px;">
+                    💡 Puedes ver los valores guardados en el formulario. Intenta actualizar las cookies y vuelve a intentar.
+                </p>
                 <p><a href="/admin">← Volver al dashboard</a></p>
             </body>
             </html>
@@ -400,16 +451,13 @@ async def save_config_endpoint(
             status_code=400
         )
     
-    # Guardar configuración (n8n_webhook_url es opcional)
-    config = {
-        "li_at": li_at,
-        "jsessionid": jsessionid,
-        "n8n_webhook_url": n8n_webhook_url if n8n_webhook_url else "",
-        "last_sync": datetime.now().isoformat()
-    }
-    save_config(config)
-    logger.info("✓ Configuración guardada exitosamente")
-    logger.info(f"  - LinkedIn cookies: guardadas")
+    # VALIDACIÓN EXITOSA - Marcar como válida
+    config_to_save["validation_status"] = "valid"
+    config_to_save.pop("validation_error", None)
+    save_config(config_to_save)
+    
+    logger.info("✓ Configuración guardada Y validada exitosamente")
+    logger.info(f"  - LinkedIn cookies: ✓ validadas")
     logger.info(f"  - n8n webhook: {'configurado' if n8n_webhook_url else 'no configurado (sincronización deshabilitada)'}")
     
     # Redirigir al dashboard
@@ -420,12 +468,13 @@ async def save_config_endpoint(
             <style>
                 body { font-family: sans-serif; margin: 50px; }
                 .success { color: #388e3c; }
-                a { color: #0a66c2; }
+                a { color: #0a66c2; text-decoration: none; }
+                a:hover { text-decoration: underline; }
             </style>
         </head>
         <body>
-            <h1 class="success">✅ Configuración Guardada</h1>
-            <p>Las cookies fueron validadas correctamente.</p>
+            <h1 class="success">✅ Configuración Guardada y Validada</h1>
+            <p>Las cookies fueron validadas correctamente y guardadas.</p>
             <p><a href="/admin">← Volver al dashboard</a></p>
         </body>
         </html>
