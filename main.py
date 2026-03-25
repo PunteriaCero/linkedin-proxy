@@ -55,6 +55,10 @@ logger = logging.getLogger(__name__)
 DEFAULT_CONFIG = {
     "li_at": "",
     "jsessionid": "",
+    "bcookie": "",  # Browser cookie (IMPORTANTE)
+    "lidc": "",  # LinkedIn data center (IMPORTANTE)
+    "user_match_history": "",  # Tracking cookie
+    "aam_uuid": "",  # Audience Manager UUID
     "n8n_webhook_url": "",
     "last_sync": None
 }
@@ -428,17 +432,61 @@ async def admin_dashboard():
             
             {validation_status}
             
+            <div class="curl-parser">
+                <h3>🔗 Extraer Cookies desde cURL</h3>
+                <form id="curl-form" style="margin: 20px 0;">
+                    <textarea id="curl-input" placeholder="Pega aquí tu comando cURL completo (Copy as cURL desde DevTools)" style="width: 100%; height: 100px; padding: 10px; font-family: monospace; font-size: 12px;"></textarea>
+                    <button type="button" onclick="parseCurl()" style="margin-top: 10px; padding: 10px 20px; background: #0a66c2; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                        📋 Extraer Cookies
+                    </button>
+                </form>
+                <div id="curl-result" style="display:none; margin: 15px 0; padding: 15px; background: #e8f5e9; border: 1px solid #4caf50; border-radius: 4px;">
+                    <p id="curl-message" style="margin: 0 0 10px 0;"></p>
+                    <button type="button" onclick="applyCookies()" style="padding: 8px 16px; background: #4caf50; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                        ✓ Aplicar Cookies al Formulario
+                    </button>
+                </div>
+            </div>
+            
+            <hr style="margin: 30px 0;">
+            
             <form method="POST" action="/admin">
+                <h3>📝 Configuración Manual</h3>
+                
                 <div class="form-group">
-                    <label for="li_at">LinkedIn Cookie (li_at)</label>
-                    <input type="text" id="li_at" name="li_at" value="{config.get('li_at', '')}" placeholder="Pega tu cookie li_at aquí" required>
-                    <small style="color: #666;">Visible para facilitar copiar/pegar</small>
+                    <label for="li_at">LinkedIn Cookie (li_at) *</label>
+                    <input type="text" id="li_at" name="li_at" value="{config.get('li_at', '')}" placeholder="Cookie li_at (required)" required>
+                    <small style="color: #666;">Identificador de sesión principal</small>
                 </div>
                 
                 <div class="form-group">
-                    <label for="jsessionid">JSESSIONID Cookie</label>
-                    <input type="text" id="jsessionid" name="jsessionid" value="{config.get('jsessionid', '')}" placeholder="Pega tu JSESSIONID aquí" required>
-                    <small style="color: #666;">Visible para facilitar copiar/pegar</small>
+                    <label for="jsessionid">JSESSIONID Cookie *</label>
+                    <input type="text" id="jsessionid" name="jsessionid" value="{config.get('jsessionid', '')}" placeholder="JSESSIONID (required)" required>
+                    <small style="color: #666;">Cookie de sesión secundaria</small>
+                </div>
+                
+                <div class="form-group">
+                    <label for="bcookie">Browser Cookie (bcookie)</label>
+                    <input type="text" id="bcookie" name="bcookie" value="{config.get('bcookie', '')}" placeholder="bcookie (recomendado)">
+                    <small style="color: #666;">Identificación del navegador (RECOMENDADO)</small>
+                </div>
+                
+                <div class="form-group">
+                    <label for="lidc">LinkedIn Data Center (lidc)</label>
+                    <input type="text" id="lidc" name="lidc" value="{config.get('lidc', '')}" placeholder="lidc (recomendado)">
+                    <small style="color: #666;">Identificador de data center (RECOMENDADO)</small>
+                </div>
+                
+                <div class="form-group">
+                    <label for="user_match_history">User Match History</label>
+                    <input type="text" id="user_match_history" name="user_match_history" value="{config.get('user_match_history', '')}" placeholder="UserMatchHistory (opcional)">
+                    <small style="color: #666;">Cookie de seguimiento (opcional)</small>
+                </div>
+                
+                <div class="form-group">
+                    <label for="aam_uuid">AAM UUID</label>
+                    <input type="text" id="aam_uuid" name="aam_uuid" value="{config.get('aam_uuid', '')}" placeholder="aam_uuid (opcional)">
+                    <small style="color: #666;">Audience Manager UUID (opcional)</small>
                 </div>
                 
                 <div class="form-group">
@@ -449,6 +497,61 @@ async def admin_dashboard():
                 
                 <button type="submit">💾 Guardar & Validar</button>
             </form>
+            
+            <script>
+                let extracted_cookies = {{}};
+                
+                async function parseCurl() {{
+                    const curl_input = document.getElementById('curl-input').value;
+                    if (!curl_input.trim()) {{
+                        alert('Por favor pega un comando cURL');
+                        return;
+                    }}
+                    
+                    const formData = new FormData();
+                    formData.append('curl_command', curl_input);
+                    
+                    try {{
+                        const response = await fetch('/parse-curl', {{
+                            method: 'POST',
+                            body: formData
+                        }});
+                        
+                        const data = await response.json();
+                        const resultDiv = document.getElementById('curl-result');
+                        const messageP = document.getElementById('curl-message');
+                        
+                        if (data.success) {{
+                            extracted_cookies = data.cookies;
+                            messageP.innerHTML = '✓ ' + data.message + '<br>Cookies encontradas: ' + Object.keys(data.cookies).join(', ');
+                            resultDiv.style.display = 'block';
+                        }} else {{
+                            alert('Error: ' + data.error);
+                            resultDiv.style.display = 'none';
+                        }}
+                    }} catch (error) {{
+                        alert('Error parseando cURL: ' + error);
+                    }}
+                }}
+                
+                function applyCookies() {{
+                    if (Object.keys(extracted_cookies).length === 0) {{
+                        alert('No hay cookies extraídas');
+                        return;
+                    }}
+                    
+                    // Aplicar cookies al formulario
+                    if (extracted_cookies.li_at) document.getElementById('li_at').value = extracted_cookies.li_at;
+                    if (extracted_cookies.jsessionid) document.getElementById('jsessionid').value = extracted_cookies.jsessionid;
+                    if (extracted_cookies.bcookie) document.getElementById('bcookie').value = extracted_cookies.bcookie;
+                    if (extracted_cookies.lidc) document.getElementById('lidc').value = extracted_cookies.lidc;
+                    if (extracted_cookies.user_match_history) document.getElementById('user_match_history').value = extracted_cookies.user_match_history;
+                    if (extracted_cookies.aam_uuid) document.getElementById('aam_uuid').value = extracted_cookies.aam_uuid;
+                    
+                    alert('✓ Cookies aplicadas al formulario. Ahora haz click en "Guardar & Validar"');
+                    document.getElementById('curl-result').style.display = 'none';
+                }}
+            </script>
             
             <div class="footer">
                 <p>Versión 1.0.0 | Logs: gateway.log</p>
@@ -464,6 +567,10 @@ async def admin_dashboard():
 async def save_config_endpoint(
     li_at: str = Form(...),
     jsessionid: str = Form(...),
+    bcookie: str = Form(default=""),
+    lidc: str = Form(default=""),
+    user_match_history: str = Form(default=""),
+    aam_uuid: str = Form(default=""),
     n8n_webhook_url: str = Form(default="")
 ):
     """Endpoint POST para guardar configuración con validación."""
@@ -472,19 +579,36 @@ async def save_config_endpoint(
     # Limpiar inputs
     li_at = li_at.strip()
     jsessionid = clean_jsessionid(jsessionid)
+    bcookie = bcookie.strip()
+    lidc = lidc.strip()
+    user_match_history = user_match_history.strip()
+    aam_uuid = aam_uuid.strip()
     n8n_webhook_url = n8n_webhook_url.strip()
     
     # GUARDAR PRIMERO - independiente de validación
-    # Esto permite que el usuario vea qué valores estaba intentando guardar
     config_to_save = {
         "li_at": li_at,
         "jsessionid": jsessionid,
+        "bcookie": bcookie,
+        "lidc": lidc,
+        "user_match_history": user_match_history,
+        "aam_uuid": aam_uuid,
         "n8n_webhook_url": n8n_webhook_url if n8n_webhook_url else "",
         "last_sync": datetime.now().isoformat(),
-        "validation_status": "pending"  # Marcar como pendiente validación
+        "validation_status": "pending"
     }
     save_config(config_to_save)
     logger.info("✓ Datos guardados en config (pendiente validación)")
+    
+    # Loguear qué cookies fueron provistas
+    cookies_provided = []
+    if li_at: cookies_provided.append("li_at")
+    if jsessionid: cookies_provided.append("jsessionid")
+    if bcookie: cookies_provided.append("bcookie")
+    if lidc: cookies_provided.append("lidc")
+    if user_match_history: cookies_provided.append("user_match_history")
+    if aam_uuid: cookies_provided.append("aam_uuid")
+    logger.info(f"Cookies proporcionadas: {', '.join(cookies_provided)}")
     
     # VALIDAR DESPUÉS
     logger.info("Validando credenciales de LinkedIn...")
@@ -558,6 +682,106 @@ async def save_config_endpoint(
         </html>
         """
     )
+
+
+@app.post("/parse-curl")
+async def parse_curl_endpoint(curl_command: str = Form(...)):
+    """
+    Parsea un comando cURL y extrae cookies + headers.
+    Útil para obtener todas las cookies de LinkedIn de una sola vez.
+    
+    Uso: 
+    - Haz clic derecho en un request de LinkedIn en DevTools → Copy as cURL
+    - Pega el comando aquí
+    - Extrae automáticamente li_at, JSESSIONID, bcookie, lidc, etc.
+    """
+    logger.info("=== PARSEANDO COMANDO cURL ===")
+    
+    try:
+        curl_command = curl_command.strip()
+        
+        # Regex para extraer cookies del header Cookie
+        import re
+        
+        # Buscar el header Cookie (con múltiples formatos posibles)
+        cookie_patterns = [
+            r"-H\s+['\"]Cookie:\s*([^'\"]+)['\"]",  # -H "Cookie: ..."
+            r"-H\s+Cookie:\s*([^\s]+)",  # -H Cookie: ... (sin comillas)
+            r"-H\s+'Cookie:\s*([^']+)'",  # -H 'Cookie: ...'
+            r"-H\s+(?:--)?header\s*=?\s*['\"]Cookie:\s*([^'\"]+)['\"]",  # Formato alternativo
+        ]
+        
+        cookies_string = None
+        for pattern in cookie_patterns:
+            match = re.search(pattern, curl_command)
+            if match:
+                cookies_string = match.group(1)
+                break
+        
+        if not cookies_string:
+            logger.warning("No se encontró header Cookie en cURL - intentando método alternativo")
+            # Intenta extraer todo lo que parezca cookies
+            # Busca líneas con semicolons que contengan = (estructura de cookie)
+            lines = curl_command.split('\n')
+            for line in lines:
+                if 'li_at=' in line or 'JSESSIONID=' in line:
+                    # Limpia la línea
+                    line = line.strip()
+                    if line.startswith('-H') or line.startswith('--header'):
+                        # Extrae el contenido entre comillas
+                        match = re.search(r'["\']([^"\']*(?:li_at|JSESSIONID)[^"\']*)["\']', line)
+                        if match:
+                            cookies_string = match.group(1)
+                            break
+        
+        if not cookies_string:
+            logger.warning("No se encontró información de cookies en cURL")
+            return {
+                "success": False,
+                "error": "No se encontró header 'Cookie' en el comando cURL. Asegúrate de copiar el comando completo."
+            }
+        
+        logger.info(f"Cookies encontradas: {cookies_string[:100]}...")
+        
+        # Parsear cookies individuales
+        cookies = {}
+        cookie_pairs = [pair.strip() for pair in cookies_string.split(';')]
+        
+        for pair in cookie_pairs:
+            if '=' in pair:
+                key, value = pair.split('=', 1)
+                key = key.strip().lower()
+                value = value.strip().strip('"').strip("'")
+                cookies[key] = value
+        
+        # Mapear nombres de cookies (a minúsculas por seguridad)
+        extracted = {
+            "li_at": cookies.get('li_at', ''),
+            "jsessionid": cookies.get('jsessionid', ''),
+            "bcookie": cookies.get('bcookie', ''),
+            "lidc": cookies.get('lidc', ''),
+            "user_match_history": cookies.get('usermatchhistory', '') or cookies.get('user_match_history', ''),
+            "aam_uuid": cookies.get('aam_uuid', ''),
+        }
+        
+        # Filtrar cookies vacías
+        extracted_clean = {k: v for k, v in extracted.items() if v}
+        
+        logger.info(f"Cookies extraídas: {list(extracted_clean.keys())}")
+        
+        return {
+            "success": True,
+            "cookies": extracted_clean,
+            "message": f"✓ Se encontraron {len(extracted_clean)} cookies",
+            "instructions": "Copia los valores en el formulario de configuración"
+        }
+    
+    except Exception as e:
+        logger.error(f"Error parseando cURL: {e}")
+        return {
+            "success": False,
+            "error": f"Error parseando cURL: {str(e)}"
+        }
 
 
 @app.post("/sync")
