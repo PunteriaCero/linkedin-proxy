@@ -203,6 +203,8 @@ def validate_linkedin_cookies(li_at: str, jsessionid: str) -> tuple[bool, str]:
             return False, "Cookie expirada o inválida (401)"
         elif "403" in error_msg:
             return False, "Acceso denegado (403) - verifica permisos"
+        elif "CHALLENGE" in error_msg or "challenge" in error_msg.lower():
+            return False, "LinkedIn requiere verificación adicional (CHALLENGE). Intenta regenerar las cookies."
         elif "JSESSIONID" in error_msg:
             return False, "Estructura de JSESSIONID incorrecta"
         elif "429" in error_msg:
@@ -327,17 +329,20 @@ async def admin_dashboard():
             <form method="POST" action="/admin">
                 <div class="form-group">
                     <label for="li_at">LinkedIn Cookie (li_at)</label>
-                    <input type="password" id="li_at" name="li_at" value="{config.get('li_at', '')}" placeholder="Pega tu cookie li_at aquí" required>
+                    <input type="text" id="li_at" name="li_at" value="{config.get('li_at', '')}" placeholder="Pega tu cookie li_at aquí" required>
+                    <small style="color: #666;">Visible para facilitar copiar/pegar</small>
                 </div>
                 
                 <div class="form-group">
                     <label for="jsessionid">JSESSIONID Cookie</label>
-                    <input type="password" id="jsessionid" name="jsessionid" value="{config.get('jsessionid', '')}" placeholder="Pega tu JSESSIONID aquí" required>
+                    <input type="text" id="jsessionid" name="jsessionid" value="{config.get('jsessionid', '')}" placeholder="Pega tu JSESSIONID aquí" required>
+                    <small style="color: #666;">Visible para facilitar copiar/pegar</small>
                 </div>
                 
                 <div class="form-group">
-                    <label for="n8n_webhook_url">n8n Webhook URL</label>
-                    <input type="url" id="n8n_webhook_url" name="n8n_webhook_url" value="{config.get('n8n_webhook_url', '')}" placeholder="https://n8n.example.com/webhook/..." required>
+                    <label for="n8n_webhook_url">n8n Webhook URL <span style="color: #999;">(Opcional)</span></label>
+                    <input type="text" id="n8n_webhook_url" name="n8n_webhook_url" value="{config.get('n8n_webhook_url', '')}" placeholder="https://n8n.example.com/webhook/...">
+                    <small style="color: #666;">Si no lo configuras, la sincronización estará deshabilitada</small>
                 </div>
                 
                 <button type="submit">💾 Guardar & Validar</button>
@@ -357,7 +362,7 @@ async def admin_dashboard():
 async def save_config_endpoint(
     li_at: str = Form(...),
     jsessionid: str = Form(...),
-    n8n_webhook_url: str = Form(...)
+    n8n_webhook_url: str = Form(default="")
 ):
     """Endpoint POST para guardar configuración con validación."""
     logger.info("=== SOLICITUD DE GUARDADO DE CONFIGURACIÓN ===")
@@ -377,9 +382,17 @@ async def save_config_endpoint(
         return HTMLResponse(
             f"""
             <html>
+            <head>
+                <style>
+                    body {{ font-family: sans-serif; margin: 50px; }}
+                    .error {{ color: #d32f2f; }}
+                    a {{ color: #0a66c2; }}
+                </style>
+            </head>
             <body>
-                <h1>❌ Error de Validación</h1>
-                <p>{validation_msg}</p>
+                <h1 class="error">❌ Error de Validación</h1>
+                <p><strong>{validation_msg}</strong></p>
+                <p>Por favor, verifica que tus cookies sean correctas y aún sean válidas.</p>
                 <p><a href="/admin">← Volver al dashboard</a></p>
             </body>
             </html>
@@ -387,22 +400,31 @@ async def save_config_endpoint(
             status_code=400
         )
     
-    # Guardar configuración
+    # Guardar configuración (n8n_webhook_url es opcional)
     config = {
         "li_at": li_at,
         "jsessionid": jsessionid,
-        "n8n_webhook_url": n8n_webhook_url,
+        "n8n_webhook_url": n8n_webhook_url if n8n_webhook_url else "",
         "last_sync": datetime.now().isoformat()
     }
     save_config(config)
     logger.info("✓ Configuración guardada exitosamente")
+    logger.info(f"  - LinkedIn cookies: guardadas")
+    logger.info(f"  - n8n webhook: {'configurado' if n8n_webhook_url else 'no configurado (sincronización deshabilitada)'}")
     
     # Redirigir al dashboard
     return HTMLResponse(
         """
         <html>
+        <head>
+            <style>
+                body { font-family: sans-serif; margin: 50px; }
+                .success { color: #388e3c; }
+                a { color: #0a66c2; }
+            </style>
+        </head>
         <body>
-            <h1>✅ Configuración Guardada</h1>
+            <h1 class="success">✅ Configuración Guardada</h1>
             <p>Las cookies fueron validadas correctamente.</p>
             <p><a href="/admin">← Volver al dashboard</a></p>
         </body>
@@ -417,6 +439,7 @@ async def sync_messages():
     """
     Sincroniza conversaciones nuevas desde LinkedIn hacia n8n.
     Obtiene detalles completos de cada conversación incluyendo mensajes.
+    NOTA: El webhook de n8n debe estar configurado para que funcione.
     """
     logger.info("=== INICIANDO SINCRONIZACIÓN ===")
     
@@ -427,9 +450,13 @@ async def sync_messages():
         logger.error("Cookies no configuradas")
         raise HTTPException(status_code=400, detail="Cookies no configuradas")
     
+    # WEBHOOK ES OPCIONAL - pero necesario para sincronizar
     if not config.get("n8n_webhook_url"):
-        logger.error("Webhook URL no configurada")
-        raise HTTPException(status_code=400, detail="Webhook URL no configurada")
+        logger.warning("Webhook de n8n no configurado - sincronización deshabilitada")
+        raise HTTPException(
+            status_code=400, 
+            detail="Webhook de n8n no configurado. Configúralo en /admin para habilitar la sincronización."
+        )
     
     try:
         # Conectar a LinkedIn
