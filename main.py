@@ -20,6 +20,14 @@ from pydantic import BaseModel
 import httpx
 from linkedin_api import Linkedin
 
+# 🚀 NUEVO: Importar Voyager helper
+from voyager_helper import (
+    create_voyager_session,
+    get_profile_voyager,
+    get_conversations_voyager,
+    extract_cookies_from_session
+)
+
 # ===== PATHS Y CONSTANTES (ANTES DE LOGGING) =====
 # Usar rutas que respeten los VOLUMEs de Docker
 if os.path.exists("/app/config"):
@@ -235,7 +243,65 @@ def retry_on_429(max_retries: int = 3, base_delay: float = 1.0):
     return decorator
 
 
-# ===== VALIDACIÓN DE LINKEDIN =====
+# ===== VALIDACIÓN DE LINKEDIN - VERSIÓN VOYAGER (NUEVA) =====
+def validate_linkedin_cookies_voyager(li_at: str, jsessionid: str, bcookie: str = "", lidc: str = "", **kwargs) -> tuple[bool, str, dict]:
+    """
+    Valida cookies usando Voyager API (más confiable que linkedin-api)
+    Retorna (is_valid, error_message, profile_data)
+    
+    Ventajas de Voyager:
+    - ✅ Cookies se renuevan automáticamente
+    - ✅ Sessions más estables
+    - ✅ No TooManyRedirects
+    - ✅ Puede revalidar infinitas veces
+    """
+    logger.info("=== VALIDACIÓN CON VOYAGER API ===")
+    
+    if not li_at or not jsessionid:
+        return False, "li_at y JSESSIONID son requeridas", {}
+    
+    try:
+        logger.info("Creando sesión Voyager...")
+        
+        # Crear sesión con Voyager
+        session = create_voyager_session(
+            li_at, jsessionid,
+            bcookie=bcookie,
+            lidc=lidc,
+            user_match_history=kwargs.get('user_match_history', ''),
+            aam_uuid=kwargs.get('aam_uuid', '')
+        )
+        
+        logger.info("Obteniendo perfil...")
+        profile = get_profile_voyager(session)
+        
+        if profile:
+            # Extraer nombre
+            first_name = profile.get('miniProfile', {}).get('firstName', 'Unknown')
+            last_name = profile.get('miniProfile', {}).get('lastName', '')
+            full_name = f"{first_name} {last_name}".strip() if first_name != 'Unknown' else 'Unknown'
+            
+            logger.info(f"✓ Perfil obtenido: {full_name}")
+            
+            # 🔥 IMPORTANTE: Extraer cookies actualizadas
+            updated_cookies = extract_cookies_from_session(session)
+            logger.info(f"Cookies actualizadas capturadas: {list(updated_cookies.keys())}")
+            
+            return True, "Cookies válidas", {
+                'name': full_name,
+                'profile': profile,
+                'updated_cookies': updated_cookies
+            }
+        else:
+            return False, "Perfil vacío", {}
+    
+    except Exception as e:
+        error_msg = str(e)
+        logger.error(f"Error en Voyager validation: {error_msg}")
+        return False, f"Error: {error_msg}", {}
+
+
+# ===== VALIDACIÓN DE LINKEDIN (ORIGINAL - PARA COMPATIBILIDAD)
 def validate_linkedin_cookies(li_at: str, jsessionid: str, bcookie: str = "", lidc: str = "", **kwargs) -> tuple[bool, str]:
     """
     Valida que las cookies sean correctas.
@@ -1411,8 +1477,8 @@ async def validate_cookies_endpoint(request: ValidateCookiesRequest):
         
         logger.info(f"Validando cookies: li_at ({len(li_at)} chars), jsessionid ({len(jsessionid)} chars)")
         
-        # Usar función de validación que retorna el perfil
-        is_valid, validation_msg, profile_data = validate_linkedin_cookies_with_profile(
+        # 🚀 USAR VOYAGER (nuevo)
+        is_valid, validation_msg, profile_data = validate_linkedin_cookies_voyager(
             li_at, jsessionid,
             bcookie=bcookie,
             lidc=lidc,
