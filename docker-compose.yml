@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  linkedin-gateway:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./config.json:/app/config.json
+      - ./processed_messages.json:/app/processed_messages.json
+      - ./logs:/app/logs
+    environment:
+      - PYTHONUNBUFFERED=1
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+    restart: unless-stopped
+    networks:
+      - linkedin-n8n
+
+networks:
+  linkedin-n8n:
+    driver: bridge

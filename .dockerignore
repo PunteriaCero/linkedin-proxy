@@ -1,0 +1,42 @@
+# Git
+.git
+.gitignore
+.github
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.egg-info
+*.egg
+dist
+build
+.Python
+venv
+env
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project
+config.json
+processed_messages.json
+gateway.log
+*.log
+.env
+
+# Documentation
+*.md
+CONTRIBUTING.md
+
+# Testing
+.pytest_cache
+.coverage
+htmlcov
