@@ -40,7 +40,14 @@ DEFAULT_CONFIG = {
     "last_sync": None
 }
 
-app = FastAPI(title="LinkedIn-n8n Gateway", version="1.0.0")
+app = FastAPI(
+    title="LinkedIn-n8n Gateway",
+    version="1.0.0",
+    description="Microservicio FastAPI que sincroniza mensajes de LinkedIn hacia n8n usando cookies de sesión",
+    docs_url="/docs",
+    redoc_url="/redoc",
+    openapi_url="/openapi.json"
+)
 
 
 # ===== UTILIDADES =====
@@ -548,6 +555,166 @@ async def get_config():
         "n8n_webhook_url": config.get("n8n_webhook_url", ""),
         "last_sync": config.get("last_sync")
     }
+
+
+@app.get("/logs", response_class=HTMLResponse)
+async def get_logs(lines: int = 100):
+    """
+    Obtiene los últimos N logs del archivo gateway.log.
+    
+    Parámetros:
+    - lines: Número de líneas a retornar (default: 100)
+    """
+    try:
+        if not os.path.exists("gateway.log"):
+            return "<pre>No logs yet</pre>"
+        
+        with open("gateway.log", "r") as f:
+            all_lines = f.readlines()
+        
+        # Obtener las últimas N líneas
+        last_lines = all_lines[-lines:] if len(all_lines) > lines else all_lines
+        
+        # Formatear como HTML
+        log_content = "".join(last_lines)
+        
+        html = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Gateway Logs</title>
+            <style>
+                body {{
+                    font-family: monospace;
+                    background: #1e1e1e;
+                    color: #d4d4d4;
+                    padding: 20px;
+                    margin: 0;
+                }}
+                .container {{
+                    max-width: 1200px;
+                    margin: 0 auto;
+                }}
+                h1 {{
+                    color: #0a66c2;
+                    border-bottom: 2px solid #0a66c2;
+                    padding-bottom: 10px;
+                }}
+                .controls {{
+                    margin-bottom: 20px;
+                }}
+                .controls a {{
+                    display: inline-block;
+                    padding: 10px 15px;
+                    background: #0a66c2;
+                    color: white;
+                    text-decoration: none;
+                    border-radius: 4px;
+                    margin-right: 10px;
+                }}
+                .controls a:hover {{
+                    background: #004182;
+                }}
+                pre {{
+                    background: #252526;
+                    padding: 15px;
+                    border-radius: 4px;
+                    overflow-x: auto;
+                    border-left: 4px solid #0a66c2;
+                }}
+                .info {{
+                    color: #4ec9b0;
+                }}
+                .error {{
+                    color: #f48771;
+                }}
+                .warning {{
+                    color: #dcdcaa;
+                }}
+                .debug {{
+                    color: #9cdcfe;
+                }}
+                .auto-refresh {{
+                    color: #858585;
+                    font-size: 12px;
+                    margin-top: 20px;
+                }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <h1>📊 Gateway Logs</h1>
+                <div class="controls">
+                    <a href="/logs?lines=50">Last 50</a>
+                    <a href="/logs?lines=100">Last 100</a>
+                    <a href="/logs?lines=500">Last 500</a>
+                    <a href="/logs?lines=1000">Last 1000</a>
+                    <a href="/admin">← Dashboard</a>
+                </div>
+                <pre><code>{log_content}</code></pre>
+                <div class="auto-refresh">
+                    ⏱️ Showing last {len(last_lines)} of {len(all_lines)} lines
+                    | Refresh the page to see new logs
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+        return html
+    
+    except Exception as e:
+        logger.error(f"Error al leer logs: {e}")
+        return f"<pre>Error reading logs: {e}</pre>"
+
+
+@app.get("/logs/json")
+async def get_logs_json(lines: int = 100):
+    """
+    Obtiene los últimos N logs en formato JSON.
+    Más eficiente para parsing programático.
+    
+    Parámetros:
+    - lines: Número de líneas a retornar (default: 100)
+    """
+    try:
+        if not os.path.exists("gateway.log"):
+            return {"logs": [], "total": 0}
+        
+        with open("gateway.log", "r") as f:
+            all_lines = f.readlines()
+        
+        # Obtener las últimas N líneas
+        last_lines = all_lines[-lines:] if len(all_lines) > lines else all_lines
+        
+        # Parsear logs (formato: timestamp - level - message)
+        parsed_logs = []
+        for line in last_lines:
+            line = line.strip()
+            if line:
+                parts = line.split(" - ", 2)
+                if len(parts) >= 3:
+                    parsed_logs.append({
+                        "timestamp": parts[0],
+                        "level": parts[1],
+                        "message": parts[2]
+                    })
+                else:
+                    parsed_logs.append({
+                        "timestamp": "",
+                        "level": "INFO",
+                        "message": line
+                    })
+        
+        return {
+            "logs": parsed_logs,
+            "total": len(all_lines),
+            "returned": len(parsed_logs),
+            "timestamp": datetime.now().isoformat()
+        }
+    
+    except Exception as e:
+        logger.error(f"Error al leer logs JSON: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 if __name__ == "__main__":
