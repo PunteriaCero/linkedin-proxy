@@ -174,10 +174,16 @@ def retry_on_429(max_retries: int = 3, base_delay: float = 1.0):
 
 
 # ===== VALIDACIÓN DE LINKEDIN =====
-def validate_linkedin_cookies(li_at: str, jsessionid: str) -> tuple[bool, str]:
+def validate_linkedin_cookies(li_at: str, jsessionid: str, bcookie: str = "", lidc: str = "", **kwargs) -> tuple[bool, str]:
     """
     Valida que las cookies sean correctas.
     Retorna (is_valid, error_message)
+    
+    :param li_at: Cookie li_at (requerida)
+    :param jsessionid: Cookie JSESSIONID (requerida)
+    :param bcookie: Cookie bcookie (opcional pero recomendada)
+    :param lidc: Cookie lidc (opcional pero recomendada)
+    :param kwargs: Otras cookies opcionales (user_match_history, aam_uuid, etc.)
     """
     logger.info("=== INICIANDO VALIDACIÓN DE COOKIES ===")
     
@@ -186,6 +192,7 @@ def validate_linkedin_cookies(li_at: str, jsessionid: str) -> tuple[bool, str]:
     
     # 1. VALIDAR ESTRUCTURA
     logger.info(f"Validando estructura: li_at ({len(li_at)} chars), JSESSIONID ({len(jsessionid)} chars)")
+    logger.info(f"Cookies adicionales: bcookie ({len(bcookie)} chars), lidc ({len(lidc)} chars)")
     
     if len(li_at) < 60:
         logger.error(f"li_at muy corta (mínimo 60 caracteres, tienes {len(li_at)})")
@@ -202,11 +209,30 @@ def validate_linkedin_cookies(li_at: str, jsessionid: str) -> tuple[bool, str]:
         jsessionid_clean = clean_jsessionid(jsessionid)
         logger.info("Preparando cookies para LinkedIn...")
         
-        # Pasar cookies como dict
+        # Pasar TODAS las cookies disponibles (no solo 2)
         cookies = {
             'li_at': li_at,
             'JSESSIONID': jsessionid_clean
         }
+        
+        # Agregar cookies opcionales si están disponibles
+        if bcookie:
+            cookies['bcookie'] = bcookie
+            logger.info(f"✓ bcookie agregada ({len(bcookie)} chars)")
+        
+        if lidc:
+            cookies['lidc'] = lidc
+            logger.info(f"✓ lidc agregada ({len(lidc)} chars)")
+        
+        # Otras cookies opcionales del kwargs
+        if 'user_match_history' in kwargs and kwargs['user_match_history']:
+            cookies['UserMatchHistory'] = kwargs['user_match_history']
+        
+        if 'aam_uuid' in kwargs and kwargs['aam_uuid']:
+            cookies['aam_uuid'] = kwargs['aam_uuid']
+        
+        logger.info(f"Total de cookies a enviar: {len(cookies)}")
+        logger.debug(f"Cookies: {list(cookies.keys())}")
         
         logger.info("Conectando a LinkedIn...")
         client = Linkedin(
@@ -216,8 +242,24 @@ def validate_linkedin_cookies(li_at: str, jsessionid: str) -> tuple[bool, str]:
             cookies=cookies
         )
         
-        logger.info("Intentando get_profile()...")
-        profile = client.get_profile()
+        # WORKAROUND: linkedin-api tiene un bug en cómo asigna cookies
+        # Necesitamos asegurar que el csrf-token se establece correctamente
+        try:
+            # Acceder a session.cookies internos y asegurar que JSESSIONID está presente
+            if hasattr(client, 'client') and hasattr(client.client, 'session'):
+                # Agregar cookies manualmente al jar
+                for key, value in cookies.items():
+                    client.client.session.cookies.set(key, value)
+                
+                # Establecer csrf-token correctamente
+                jsessionid_for_csrf = jsessionid_clean.strip('"')
+                client.client.session.headers["csrf-token"] = jsessionid_for_csrf
+                logger.info(f"✓ CSRF Token establecido: {jsessionid_for_csrf[:30]}...")
+        except Exception as e:
+            logger.warning(f"⚠️  No se pudo establecer CSRF token manualmente: {e}")
+        
+        logger.info("Intentando get_user_profile()...")
+        profile = client.get_user_profile()
         
         if profile and profile.get('firstName'):
             name = profile.get('firstName', 'Unknown')
@@ -225,6 +267,7 @@ def validate_linkedin_cookies(li_at: str, jsessionid: str) -> tuple[bool, str]:
             return True, "Cookies válidas"
         elif profile:
             logger.info("✓ Perfil obtenido (sin firstName)")
+            logger.debug(f"Perfil data: {profile}")
             return True, "Cookies válidas"
         else:
             logger.warning("Perfil vacío retornado")
@@ -612,7 +655,13 @@ async def save_config_endpoint(
     
     # VALIDAR DESPUÉS
     logger.info("Validando credenciales de LinkedIn...")
-    is_valid, validation_msg = validate_linkedin_cookies(li_at, jsessionid)
+    is_valid, validation_msg = validate_linkedin_cookies(
+        li_at, jsessionid, 
+        bcookie=bcookie, 
+        lidc=lidc,
+        user_match_history=user_match_history,
+        aam_uuid=aam_uuid
+    )
     
     if not is_valid:
         logger.error(f"Validación fallida: {validation_msg}")
@@ -709,15 +758,17 @@ async def parse_curl_endpoint(curl_command: str = Form(...)):
         
         cookies_string = None
         
-        # NUEVO MÉTODO: Extraer todo lo que va después de -b hasta el próximo flag o fin
-        # Busca -b seguido de comilla, extrae hasta la comilla de cierre
+        # MÉTODO MEJORADO: Busca -b y extrae cookies de forma robusta
+        # Maneja: -b 'cookies...' o -b "cookies..." o -b cookies
+        import re
+        
         b_patterns = [
-            # -b 'cookies' - extrae hasta la comilla de cierre siguiente
-            r"-b\s+'([^']*(?:'[^']*'[^']*)*)'",  # Maneja comillas internas
-            # -b "cookies" - similar con comillas dobles
-            r'-b\s+"([^"]*(?:"[^"]*"[^"]*)*)"',  # Maneja comillas internas
-            # Fallback simple
-            r"-b\s+['\"]([^'\"]*)",  # Hasta la comilla opuesta
+            # -b 'cookies' (con comilla simple)
+            r"-b\s+'([^']+)'",
+            # -b "cookies" (con comilla doble)
+            r'-b\s+"([^"]+)"',
+            # -b cookies (sin comillas, hasta el próximo flag o espacio)
+            r"-b\s+([^\s-][^\s]*(?:\s+(?!-).*?)*)",
         ]
         
         for pattern in b_patterns:
@@ -1050,10 +1101,10 @@ async def get_logs(lines: int = 100):
     - lines: Número de líneas a retornar (default: 100)
     """
     try:
-        if not os.path.exists("gateway.log"):
+        if not os.path.exists(LOG_FILE):
             return "<pre>No logs yet</pre>"
         
-        with open("gateway.log", "r") as f:
+        with open(LOG_FILE, "r") as f:
             all_lines = f.readlines()
         
         # Obtener las últimas N líneas
@@ -1161,10 +1212,10 @@ async def get_logs_json(lines: int = 100):
     - lines: Número de líneas a retornar (default: 100)
     """
     try:
-        if not os.path.exists("gateway.log"):
+        if not os.path.exists(LOG_FILE):
             return {"logs": [], "total": 0}
         
-        with open("gateway.log", "r") as f:
+        with open(LOG_FILE, "r") as f:
             all_lines = f.readlines()
         
         # Obtener las últimas N líneas
