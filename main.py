@@ -173,7 +173,6 @@ def retry_on_429(max_retries: int = 3, base_delay: float = 1.0):
 def validate_linkedin_cookies(li_at: str, jsessionid: str) -> tuple[bool, str]:
     """
     Valida que las cookies sean correctas.
-    NOTA: La librería linkedin-api requiere pasar cookies como dict.
     Retorna (is_valid, error_message)
     """
     logger.info("=== INICIANDO VALIDACIÓN DE COOKIES ===")
@@ -186,11 +185,11 @@ def validate_linkedin_cookies(li_at: str, jsessionid: str) -> tuple[bool, str]:
     
     if len(li_at) < 60:
         logger.error(f"li_at muy corta (mínimo 60 caracteres, tienes {len(li_at)})")
-        return False, f"li_at cookie incompleta o incorrecta (tienes {len(li_at)} caracteres, se esperan 60+)"
+        return False, f"li_at cookie incompleta (tienes {len(li_at)} caracteres, se esperan 60+)"
     
     if len(jsessionid) < 20:
         logger.error(f"JSESSIONID muy corta (mínimo 20 caracteres, tienes {len(jsessionid)})")
-        return False, f"JSESSIONID incompleta o incorrecta (tienes {len(jsessionid)} caracteres, se esperan 20+)"
+        return False, f"JSESSIONID incompleta (tienes {len(jsessionid)} caracteres, se esperan 20+)"
     
     logger.info("✓ Estructura de cookies válida")
     
@@ -199,19 +198,17 @@ def validate_linkedin_cookies(li_at: str, jsessionid: str) -> tuple[bool, str]:
         jsessionid_clean = clean_jsessionid(jsessionid)
         logger.info("Preparando cookies para LinkedIn...")
         
-        # FORMATO CORRECTO: Pasar cookies como dict con authenticate=False
+        # Pasar cookies como dict
         cookies = {
             'li_at': li_at,
             'JSESSIONID': jsessionid_clean
         }
         
         logger.info("Conectando a LinkedIn...")
-        # No pasar timeout (linkedin-api no lo soporta como parámetro)
-        # No pasar username/password (usaremos authenticate=False)
         client = Linkedin(
-            username='',  # dummy - no se usa con cookies
-            password='',  # dummy - no se usa con cookies
-            authenticate=False,  # No intentar autenticación
+            username='',
+            password='',
+            authenticate=False,
             cookies=cookies
         )
         
@@ -223,8 +220,8 @@ def validate_linkedin_cookies(li_at: str, jsessionid: str) -> tuple[bool, str]:
             logger.info(f"✓ Validación exitosa. Perfil: {name}")
             return True, "Cookies válidas"
         elif profile:
-            logger.warning("Perfil retornado pero sin firstName")
-            return True, "Cookies válidas (perfil obtenido)"
+            logger.info("✓ Perfil obtenido (sin firstName)")
+            return True, "Cookies válidas"
         else:
             logger.warning("Perfil vacío retornado")
             return False, "Perfil vacío - posible cookie expirada"
@@ -236,54 +233,60 @@ def validate_linkedin_cookies(li_at: str, jsessionid: str) -> tuple[bool, str]:
         
         # DETECTAR Y CLASIFICAR ERRORES
         
-        if "challenge" in error_lower:
+        # JSONDecodeError = LinkedIn rechazó las cookies (respuesta vacía)
+        if "jsondecodeerror" in error_lower or "expecting value" in error_lower:
+            logger.error(">>> JSON DECODE ERROR (LinkedIn rechazó cookies) <<<")
+            return False, (
+                "LinkedIn rechazó las cookies (respuesta vacía). "
+                "Posibles causas:\n"
+                "1) Cookies expiradas (24-48 horas máximo)\n"
+                "2) Cookies inválidas\n"
+                "3) LinkedIn bloqueó el acceso\n"
+                "4) Cookies obtenidas desde navegador incógnito\n\n"
+                "Solución: Regenera las cookies desde LinkedIn en navegador normal"
+            )
+        
+        elif "challenge" in error_lower:
             logger.error(">>> CHALLENGE DETECTADO <<<")
             return False, (
                 "LinkedIn requiere verificación adicional (CHALLENGE). "
-                "Esto ocurre cuando LinkedIn detecta actividad inusual. "
-                "Posibles soluciones:\n"
-                "1) Abre LinkedIn en tu navegador y completa cualquier verificación\n"
-                "2) Si te pide código de verificación (email/teléfono), complétalo\n"
-                "3) Espera 5-10 minutos\n"
-                "4) Regenera las cookies\n"
-                "5) Intenta nuevamente"
+                "Abre LinkedIn en navegador, completa verificación, luego regenera cookies."
             )
         
         elif "401" in error_msg or "unauthorized" in error_lower:
             logger.error(">>> 401 UNAUTHORIZED <<<")
-            return False, "Cookie expirada o inválida (Error 401). Intenta regenerar las cookies."
+            return False, "Cookies expiradas o inválidas (401). Regenera desde LinkedIn."
         
         elif "403" in error_msg:
             logger.error(">>> 403 FORBIDDEN <<<")
-            return False, "Acceso denegado (Error 403). Verifica permisos de cuenta."
+            return False, "Acceso denegado (403). Verifica permisos de cuenta o bloqueos."
         
         elif "jsessionid" in error_lower:
             logger.error(">>> JSESSIONID ERROR <<<")
-            return False, "Estructura de JSESSIONID incorrecta. Cópiala nuevamente desde DevTools."
+            return False, "Estructura de JSESSIONID incorrecta. Obtén nuevamente desde DevTools."
         
         elif "429" in error_msg:
             logger.error(">>> 429 RATE LIMIT <<<")
-            return False, "Rate limit alcanzado (Error 429). Intenta más tarde."
+            return False, "Rate limit alcanzado. Intenta más tarde."
         
         elif "connection" in error_lower or "timeout" in error_lower or "connect" in error_lower:
             logger.error(">>> CONNECTION ERROR <<<")
             return False, (
-                "No se puede conectar a LinkedIn. "
-                "Posibles causas:\n"
+                "No se puede conectar a LinkedIn. Causas posibles:\n"
                 "1) Problema de conexión de red\n"
                 "2) LinkedIn no disponible\n"
                 "3) Bloqueo de IP\n"
                 "4) Cookies expiradas\n\n"
-                "Intenta: Verifica conexión, abre LinkedIn en navegador, regenera cookies"
+                "Intenta: Verifica conexión, abre LinkedIn, regenera cookies"
             )
         
         else:
-            logger.error(f">>> ERROR DESCONOCIDO: {error_msg} <<<")
+            logger.error(f">>> ERROR DESCONOCIDO: {error_msg[:100]} <<<")
             return False, (
-                f"Error de validación: {error_msg[:80]}\n"
-                "Recomendaciones:\n"
-                "1) Verifica que ambas cookies sean correctas\n"
-                "2) Cópiala completamente desde DevTools\n"
+                f"Error durante validación: {error_msg[:80]}\n"
+                "Intenta:\n"
+                "1) Verifica ambas cookies son correctas\n"
+                "2) Obtenlas completamente desde DevTools\n"
                 "3) Regenera las cookies desde LinkedIn"
             )
 
