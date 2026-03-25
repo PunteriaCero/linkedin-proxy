@@ -122,7 +122,8 @@ def get_profile_voyager(session: requests.Session) -> dict:
     try:
         response = session.get(
             'https://www.linkedin.com/voyager/api/me',
-            timeout=30
+            timeout=30,
+            allow_redirects=False  # 🔥 CRITICAL: Don't follow redirects
         )
         
         logger.info(f"Voyager /me response: {response.status_code}")
@@ -139,6 +140,11 @@ def get_profile_voyager(session: requests.Session) -> dict:
             logger.debug(f"Full profile: {profile}")
             
             return profile
+        
+        elif response.status_code == 302:
+            logger.error("❌ 302 Redirect - Session invalid or cookies expired")
+            logger.debug(f"Redirect to: {response.headers.get('Location', 'Unknown')}")
+            raise Exception("Sesión inválida (302 Redirect). Cookies expiradas o rechazadas por LinkedIn.")
         
         elif response.status_code == 401:
             logger.error("❌ 401 Unauthorized - Cookies expired or invalid")
@@ -190,7 +196,8 @@ def get_conversations_voyager(session: requests.Session, limit: int = 50) -> dic
     try:
         response = session.get(
             f'https://www.linkedin.com/voyager/api/messaging/conversations?keyVersion=LEGACY_INBOX&count={limit}',
-            timeout=30
+            timeout=30,
+            allow_redirects=False  # 🔥 Don't follow redirects
         )
         
         logger.info(f"Voyager /conversations response: {response.status_code}")
@@ -200,6 +207,9 @@ def get_conversations_voyager(session: requests.Session, limit: int = 50) -> dic
             conversations = data.get('elements', [])
             logger.info(f"✓ Retrieved {len(conversations)} conversations")
             return data
+        
+        elif response.status_code == 302:
+            raise Exception("Sesión inválida (302). Regenera cookies.")
         
         elif response.status_code == 401:
             raise Exception("Cookies expiradas (401)")
@@ -239,11 +249,15 @@ def get_conversation_messages(session: requests.Session, conversation_id: str, l
     try:
         response = session.get(
             f'https://www.linkedin.com/voyager/api/messaging/conversations/{conversation_id}/events?direction=AFTER&start=0&count={limit}',
-            timeout=30
+            timeout=30,
+            allow_redirects=False  # 🔥 Don't follow redirects
         )
         
         if response.status_code == 200:
             return response.json()
+        
+        elif response.status_code == 302:
+            raise Exception("Sesión inválida (302). Regenera cookies.")
         
         elif response.status_code == 401:
             raise Exception("Cookies expiradas (401)")
@@ -284,7 +298,8 @@ def send_message_voyager(
         response = session.post(
             f'https://www.linkedin.com/voyager/api/messaging/conversations/{conversation_id}/events',
             json=payload,
-            timeout=30
+            timeout=30,
+            allow_redirects=False  # 🔥 Don't follow redirects
         )
         
         logger.info(f"Send message response: {response.status_code}")
@@ -292,6 +307,9 @@ def send_message_voyager(
         if response.status_code in [200, 201]:
             logger.info("✓ Message sent successfully")
             return response.json()
+        
+        elif response.status_code == 302:
+            raise Exception("Sesión inválida (302). Regenera cookies.")
         
         elif response.status_code == 401:
             raise Exception("Cookies expiradas (401)")
