@@ -688,73 +688,104 @@ async def save_config_endpoint(
 async def parse_curl_endpoint(curl_command: str = Form(...)):
     """
     Parsea un comando cURL y extrae cookies + headers.
-    Útil para obtener todas las cookies de LinkedIn de una sola vez.
-    
-    Uso: 
-    - Haz clic derecho en un request de LinkedIn en DevTools → Copy as cURL
-    - Pega el comando aquí
-    - Extrae automáticamente li_at, JSESSIONID, bcookie, lidc, etc.
+    Soporta múltiples formatos:
+    - -H "Cookie: ..." (formato Chrome DevTools)
+    - -b 'cookies' (formato curl estándar)
+    - --cookie "..." (alias de -b)
+    Maneja saltos de línea en el cURL
     """
     logger.info("=== PARSEANDO COMANDO cURL ===")
     
     try:
+        # Normaliza espacios y saltos de línea
         curl_command = curl_command.strip()
+        # Reemplaza saltos de línea con espacios para facilitar búsqueda
+        curl_normalized = " ".join(curl_command.split())
         
-        # Regex para extraer cookies del header Cookie
+        logger.info(f"cURL recibido (primeros 100 chars): {curl_command[:100]}...")
+        logger.info(f"cURL normalizado (primeros 100 chars): {curl_normalized[:100]}...")
+        
         import re
         
-        # Buscar el header Cookie (con múltiples formatos posibles)
-        cookie_patterns = [
-            r"-H\s+['\"]Cookie:\s*([^'\"]+)['\"]",  # -H "Cookie: ..."
-            r"-H\s+Cookie:\s*([^\s]+)",  # -H Cookie: ... (sin comillas)
-            r"-H\s+'Cookie:\s*([^']+)'",  # -H 'Cookie: ...'
-            r"-H\s+(?:--)?header\s*=?\s*['\"]Cookie:\s*([^'\"]+)['\"]",  # Formato alternativo
+        cookies_string = None
+        
+        # NUEVO MÉTODO: Extraer todo lo que va después de -b hasta el próximo flag o fin
+        # Busca -b seguido de comilla, extrae hasta la comilla de cierre
+        b_patterns = [
+            # -b 'cookies' - extrae hasta la comilla de cierre siguiente
+            r"-b\s+'([^']*(?:'[^']*'[^']*)*)'",  # Maneja comillas internas
+            # -b "cookies" - similar con comillas dobles
+            r'-b\s+"([^"]*(?:"[^"]*"[^"]*)*)"',  # Maneja comillas internas
+            # Fallback simple
+            r"-b\s+['\"]([^'\"]*)",  # Hasta la comilla opuesta
         ]
         
-        cookies_string = None
-        for pattern in cookie_patterns:
-            match = re.search(pattern, curl_command)
+        for pattern in b_patterns:
+            match = re.search(pattern, curl_normalized)
             if match:
                 cookies_string = match.group(1)
+                logger.info(f"✓ Formato detectado: -b (curl estándar)")
+                logger.info(f"  Cookies extraídas: {len(cookies_string)} caracteres")
                 break
         
+        # Si no encuentra -b, intenta -H "Cookie:" (Chrome DevTools)
         if not cookies_string:
-            logger.warning("No se encontró header Cookie en cURL - intentando método alternativo")
-            # Intenta extraer todo lo que parezca cookies
-            # Busca líneas con semicolons que contengan = (estructura de cookie)
-            lines = curl_command.split('\n')
-            for line in lines:
-                if 'li_at=' in line or 'JSESSIONID=' in line:
-                    # Limpia la línea
-                    line = line.strip()
-                    if line.startswith('-H') or line.startswith('--header'):
-                        # Extrae el contenido entre comillas
-                        match = re.search(r'["\']([^"\']*(?:li_at|JSESSIONID)[^"\']*)["\']', line)
-                        if match:
-                            cookies_string = match.group(1)
-                            break
+            h_patterns = [
+                r"-H\s+['\"]Cookie:\s*([^'\"]+)['\"]",  # -H "Cookie: ..."
+                r"-H\s+Cookie:\s*([^\s]+)",  # -H Cookie: ... (sin comillas)
+                r"-H\s+'Cookie:\s*([^']+)'",  # -H 'Cookie: ...'
+            ]
+            
+            for pattern in h_patterns:
+                match = re.search(pattern, curl_normalized)
+                if match:
+                    cookies_string = match.group(1)
+                    logger.info(f"✓ Formato detectado: -H (Chrome DevTools)")
+                    break
         
         if not cookies_string:
             logger.warning("No se encontró información de cookies en cURL")
+            logger.debug(f"cURL normalizado: {curl_normalized[:500]}...")
             return {
                 "success": False,
-                "error": "No se encontró header 'Cookie' en el comando cURL. Asegúrate de copiar el comando completo."
+                "error": "No se encontraron cookies. Soportamos -H 'Cookie: ...' y -b 'cookies'",
+                "debug": f"Se analizó: {curl_normalized[:200]}..."
             }
         
-        logger.info(f"Cookies encontradas: {cookies_string[:100]}...")
+        logger.info(f"Cookies encontradas (primeros 150): {cookies_string[:150]}...")
         
-        # Parsear cookies individuales
+        # Parsear cookies individuales respetando comillas
         cookies = {}
-        cookie_pairs = [pair.strip() for pair in cookies_string.split(';')]
         
-        for pair in cookie_pairs:
-            if '=' in pair:
-                key, value = pair.split('=', 1)
-                key = key.strip().lower()
-                value = value.strip().strip('"').strip("'")
-                cookies[key] = value
+        # Split por ; (cookies pueden tener comillas internas)
+        cookie_pairs = cookies_string.split(';')
+        logger.info(f"Split encontró {len(cookie_pairs)} pares potenciales")
         
-        # Mapear nombres de cookies (a minúsculas por seguridad)
+        for idx, pair in enumerate(cookie_pairs):
+            pair = pair.strip()
+            if not pair or '=' not in pair:
+                if pair:
+                    logger.debug(f"  Par {idx} descartado (vacío o sin =): {pair[:40]}...")
+                continue
+            
+            # Buscar el primer = para separar key y value
+            eq_idx = pair.find('=')
+            key = pair[:eq_idx].strip().lower()
+            value = pair[eq_idx+1:].strip()
+            
+            # Limpia comillas si existen (pueden ser simples o dobles)
+            if value.startswith('"') and value.endswith('"'):
+                value = value[1:-1]
+            elif value.startswith("'") and value.endswith("'"):
+                value = value[1:-1]
+            
+            cookies[key] = value
+            logger.debug(f"  Par {idx}: {key} = {value[:40]}...")
+        
+        logger.info(f"Total de pares parseados: {len(cookies)}")
+        logger.info(f"Keys parseadas: {list(cookies.keys())}")
+        
+        # Mapear nombres de cookies (a minúsculas, normalizado)
         extracted = {
             "li_at": cookies.get('li_at', ''),
             "jsessionid": cookies.get('jsessionid', ''),
@@ -768,16 +799,28 @@ async def parse_curl_endpoint(curl_command: str = Form(...)):
         extracted_clean = {k: v for k, v in extracted.items() if v}
         
         logger.info(f"Cookies extraídas: {list(extracted_clean.keys())}")
+        logger.info(f"Total de cookies encontradas: {len(extracted_clean)}")
+        
+        # Log de debugging para cada cookie
+        for key in extracted.keys():
+            status = "✓" if extracted[key] else "✗"
+            logger.debug(f"{status} {key}: {extracted[key][:50] if extracted[key] else 'NO ENCONTRADA'}...")
         
         return {
             "success": True,
             "cookies": extracted_clean,
             "message": f"✓ Se encontraron {len(extracted_clean)} cookies",
+            "critical_cookies": {
+                "li_at": bool(extracted_clean.get('li_at')),
+                "jsessionid": bool(extracted_clean.get('jsessionid')),
+                "bcookie": bool(extracted_clean.get('bcookie')),
+                "lidc": bool(extracted_clean.get('lidc')),
+            },
             "instructions": "Copia los valores en el formulario de configuración"
         }
     
     except Exception as e:
-        logger.error(f"Error parseando cURL: {e}")
+        logger.error(f"Error parseando cURL: {e}", exc_info=True)
         return {
             "success": False,
             "error": f"Error parseando cURL: {str(e)}"
