@@ -16,6 +16,7 @@ from functools import wraps
 from fastapi import FastAPI, HTTPException, Form
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 import httpx
 from linkedin_api import Linkedin
 
@@ -52,6 +53,17 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
+
+# ===== MODELOS PYDANTIC =====
+class ValidateCookiesRequest(BaseModel):
+    """Request model para POST /validate-cookies"""
+    li_at: str
+    jsessionid: str
+    bcookie: str = ""
+    lidc: str = ""
+    user_match_history: str = ""
+    aam_uuid: str = ""
+
 DEFAULT_CONFIG = {
     "li_at": "",
     "jsessionid": "",
@@ -572,7 +584,14 @@ async def admin_dashboard():
                     <small style="color: #666;">Si no lo configuras, la sincronización estará deshabilitada</small>
                 </div>
                 
-                <button type="submit">💾 Guardar & Validar</button>
+                <div style="display: flex; gap: 10px; margin-top: 20px;">
+                    <button type="submit" style="flex: 1; padding: 12px; background: #4caf50; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">
+                        💾 Guardar Configuración
+                    </button>
+                    <button type="button" onclick="validateCookies()" style="flex: 1; padding: 12px; background: #2196f3; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">
+                        ✓ Validar Cookies
+                    </button>
+                </div>
             </form>
             
             <script>
@@ -625,8 +644,52 @@ async def admin_dashboard():
                     if (extracted_cookies.user_match_history) document.getElementById('user_match_history').value = extracted_cookies.user_match_history;
                     if (extracted_cookies.aam_uuid) document.getElementById('aam_uuid').value = extracted_cookies.aam_uuid;
                     
-                    alert('✓ Cookies aplicadas al formulario. Ahora haz click en "Guardar & Validar"');
+                    alert('✓ Cookies aplicadas al formulario. Ahora haz click en "Guardar Configuración"');
                     document.getElementById('curl-result').style.display = 'none';
+                }}
+                
+                async function validateCookies() {{
+                    const li_at = document.getElementById('li_at').value.trim();
+                    const jsessionid = document.getElementById('jsessionid').value.trim();
+                    
+                    if (!li_at || !jsessionid) {{
+                        alert('❌ Debes ingresar li_at y JSESSIONID antes de validar');
+                        return;
+                    }}
+                    
+                    // Mostrar mensaje de carga
+                    const btn = event.target;
+                    const originalText = btn.innerHTML;
+                    btn.innerHTML = '⏳ Validando...';
+                    btn.disabled = true;
+                    
+                    try {{
+                        const response = await fetch('/validate-cookies', {{
+                            method: 'POST',
+                            headers: {{'Content-Type': 'application/json'}},
+                            body: JSON.stringify({{
+                                li_at: li_at,
+                                jsessionid: jsessionid,
+                                bcookie: document.getElementById('bcookie').value.trim(),
+                                lidc: document.getElementById('lidc').value.trim(),
+                                user_match_history: document.getElementById('user_match_history').value.trim(),
+                                aam_uuid: document.getElementById('aam_uuid').value.trim()
+                            }})
+                        }});
+                        
+                        const data = await response.json();
+                        
+                        if (data.success) {{
+                            alert('✅ Cookies validadas correctamente!\\n\\nUsuario: ' + (data.user_name || 'N/A'));
+                        }} else {{
+                            alert('❌ Validación fallida:\\n\\n' + data.detail);
+                        }}
+                    }} catch (error) {{
+                        alert('❌ Error durante la validación: ' + error);
+                    }} finally {{
+                        btn.innerHTML = originalText;
+                        btn.disabled = false;
+                    }}
                 }}
             </script>
             
@@ -1256,7 +1319,100 @@ async def get_logs_json(lines: int = 100):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ===== ENDPOINTS DE PRUEBA =====
+# ===== ENDPOINTS DE VALIDACIÓN Y PRUEBA =====
+@app.post("/validate-cookies")
+async def validate_cookies_endpoint(request: ValidateCookiesRequest):
+    """
+    Valida cookies contra LinkedIn.
+    
+    Endpoint separado de POST /admin para permitir validación bajo demanda
+    sin invalidar las cookies (no hay múltiples IPs detectadas si el usuario
+    cierra navegador antes de validar).
+    
+    Request JSON:
+    {
+        "li_at": "...",
+        "jsessionid": "...",
+        "bcookie": "...",
+        "lidc": "...",
+        "user_match_history": "...",
+        "aam_uuid": "..."
+    }
+    
+    Returns:
+    {
+        "success": true/false,
+        "user_name": "Nombre Usuario" (si success=true),
+        "detail": "error message" (si success=false)
+    }
+    """
+    logger.info("=== ENDPOINT /validate-cookies - Validación bajo demanda ===")
+    
+    try:
+        # Extraer valores del request
+        li_at = request.li_at.strip()
+        jsessionid = request.jsessionid.strip()
+        bcookie = request.bcookie.strip()
+        lidc = request.lidc.strip()
+        user_match_history = request.user_match_history.strip()
+        aam_uuid = request.aam_uuid.strip()
+        
+        # Validar requeridos
+        if not li_at or not jsessionid:
+            logger.warning("Validación sin cookies requeridas")
+            return {
+                "success": False,
+                "detail": "li_at y jsessionid son requeridas"
+            }
+        
+        logger.info(f"Validando cookies: li_at ({len(li_at)} chars), jsessionid ({len(jsessionid)} chars)")
+        
+        # Usar función de validación
+        is_valid, validation_msg = validate_linkedin_cookies(
+            li_at, jsessionid,
+            bcookie=bcookie,
+            lidc=lidc,
+            user_match_history=user_match_history,
+            aam_uuid=aam_uuid
+        )
+        
+        if is_valid:
+            logger.info("✓ Validación exitosa")
+            
+            # Obtener nombre del usuario
+            try:
+                client = create_linkedin_client_with_cookies(
+                    li_at, jsessionid,
+                    bcookie=bcookie,
+                    lidc=lidc,
+                    user_match_history=user_match_history,
+                    aam_uuid=aam_uuid
+                )
+                profile = client.get_user_profile()
+                user_name = profile.get('miniProfile', {}).get('firstName', 'Unknown')
+            except:
+                user_name = "Unknown"
+            
+            return {
+                "success": True,
+                "user_name": user_name,
+                "detail": validation_msg
+            }
+        else:
+            logger.error(f"Validación fallida: {validation_msg}")
+            return {
+                "success": False,
+                "detail": validation_msg
+            }
+            
+    except Exception as e:
+        logger.error(f"Error en /validate-cookies: {type(e).__name__}: {e}")
+        return {
+            "success": False,
+            "detail": f"{type(e).__name__}: {str(e)[:200]}"
+        }
+
+
 @app.get("/messages")
 async def get_messages():
     """
