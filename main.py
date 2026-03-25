@@ -397,6 +397,7 @@ async def save_config_endpoint(
 async def sync_messages():
     """
     Sincroniza conversaciones nuevas desde LinkedIn hacia n8n.
+    Obtiene detalles completos de cada conversación incluyendo mensajes.
     """
     logger.info("=== INICIANDO SINCRONIZACIÓN ===")
     
@@ -416,7 +417,7 @@ async def sync_messages():
         logger.info("Conectando a LinkedIn...")
         client = Linkedin(config["li_at"], clean_jsessionid(config["jsessionid"]))
         
-        # Obtener conversaciones (mock por ahora - linkedin-api tiene limitaciones)
+        # Obtener conversaciones (solo metadatos)
         logger.info("Obteniendo conversaciones...")
         conversations = client.get_conversations()
         
@@ -428,31 +429,63 @@ async def sync_messages():
         processed_ids = load_processed_messages()
         messages_to_send = []
         
-        # Procesar conversaciones
+        # Procesar cada conversación
+        logger.info(f"Procesando {len(conversations)} conversaciones...")
         for conv in conversations:
-            conv_id = conv.get("conversationId") or conv.get("id")
-            messages = conv.get("messages", [])
-            
-            for msg in messages:
-                msg_id = msg.get("messageId") or f"{conv_id}_{msg.get('timestamp')}"
+            try:
+                # Obtener ID y participante
+                conv_id = conv.get("conversation_urn_id") or conv.get("urn_id")
+                participants = conv.get("participants", [])
+                participant_name = participants[0].get("name", "Unknown") if participants else "Unknown"
                 
-                if msg_id not in processed_ids:
-                    logger.info(f"Nuevo mensaje encontrado: {msg_id}")
+                if not conv_id:
+                    logger.warning(f"Conversación sin ID: {conv}")
+                    continue
+                
+                # Obtener detalles completos de la conversación (incluyendo mensajes)
+                logger.debug(f"Obteniendo detalles de conversación: {conv_id}")
+                try:
+                    details = client.get_conversation_details(conv_id)
+                except Exception as e:
+                    logger.warning(f"No se pudo obtener detalles de {conv_id}: {e}")
+                    continue
+                
+                # Procesar mensajes
+                messages = details.get("messages", [])
+                logger.debug(f"Conversación {conv_id} tiene {len(messages)} mensajes")
+                
+                for msg in messages:
+                    # Generar ID único del mensaje
+                    msg_timestamp = msg.get("created", str(int(time.time())))
+                    msg_id = f"{conv_id}_{msg_timestamp}"
                     
-                    # Construir payload para n8n
-                    payload = {
-                        "conversation_id": conv_id,
-                        "message_id": msg_id,
-                        "text": msg.get("text", ""),
-                        "sender": msg.get("from", ""),
-                        "timestamp": msg.get("timestamp"),
-                        "gateway_timestamp": datetime.now().isoformat()
-                    }
-                    
-                    messages_to_send.append(payload)
-                    processed_ids.add(msg_id)
+                    if msg_id not in processed_ids:
+                        logger.info(f"Nuevo mensaje encontrado: {msg_id}")
+                        
+                        # Construir payload para n8n con info REAL de LinkedIn
+                        payload = {
+                            "conversation_id": conv_id,
+                            "message_id": msg_id,
+                            "participant_name": participant_name,
+                            "body": msg.get("body", ""),
+                            "text": msg.get("body", ""),  # Alias para compatibilidad
+                            "sender_id": msg.get("from", ""),
+                            "is_outgoing": msg.get("is_outgoing", False),
+                            "created_at": msg.get("created", ""),
+                            "attachment_count": len(msg.get("attachments", [])),
+                            "attachments": msg.get("attachments", []),
+                            "gateway_timestamp": datetime.now().isoformat()
+                        }
+                        
+                        messages_to_send.append(payload)
+                        processed_ids.add(msg_id)
+                        logger.debug(f"Payload agregado: {payload}")
+                
+            except Exception as e:
+                logger.error(f"Error procesando conversación {conv.get('conversation_urn_id')}: {e}")
+                continue
         
-        # Enviar a n8n
+        # Enviar a n8n si hay mensajes nuevos
         if messages_to_send:
             logger.info(f"Enviando {len(messages_to_send)} mensajes a n8n...")
             
@@ -463,6 +496,7 @@ async def sync_messages():
                         json={
                             "action": "sync_messages",
                             "messages": messages_to_send,
+                            "total": len(messages_to_send),
                             "timestamp": datetime.now().isoformat()
                         }
                     )
@@ -480,6 +514,7 @@ async def sync_messages():
                     return {
                         "status": "success",
                         "messages_synced": len(messages_to_send),
+                        "conversations_processed": len(conversations),
                         "n8n_response": response.json()
                     }
                 
@@ -489,7 +524,7 @@ async def sync_messages():
         
         else:
             logger.info("No hay mensajes nuevos para procesar")
-            return {"status": "success", "messages_synced": 0}
+            return {"status": "success", "messages_synced": 0, "conversations_processed": len(conversations)}
     
     except Exception as e:
         logger.error(f"Error en sincronización: {e}")
@@ -500,6 +535,7 @@ async def sync_messages():
 async def send_reply(conversation_id: str, text: str):
     """
     Envía una respuesta a una conversación en LinkedIn.
+    Valida respuesta real del servidor de LinkedIn.
     """
     logger.info(f"=== ENVIANDO RESPUESTA ===")
     logger.info(f"Conversación: {conversation_id}")
@@ -514,19 +550,27 @@ async def send_reply(conversation_id: str, text: str):
     try:
         client = Linkedin(config["li_at"], clean_jsessionid(config["jsessionid"]))
         
-        # Enviar mensaje (si la librería lo soporta)
-        # Nota: linkedin-api puede tener limitaciones aquí
-        logger.info("Intentando enviar mensaje...")
+        # Enviar mensaje y capturar respuesta
+        logger.info("Enviando mensaje a LinkedIn...")
+        error = client.send_message(
+            message_body=text,
+            conversation_urn_id=conversation_id
+        )
         
-        # Mock response por ahora
+        if error:
+            logger.error(f"Error en send_message: {error}")
+            raise HTTPException(status_code=500, detail="Failed to send message to LinkedIn")
+        
+        # Si no hay error, el mensaje se envió correctamente
         result = {
             "status": "sent",
             "conversation_id": conversation_id,
-            "message_id": f"msg_{int(time.time())}",
-            "timestamp": datetime.now().isoformat()
+            "message_sent": text,
+            "timestamp": datetime.now().isoformat(),
+            "linkedin_validated": True
         }
         
-        logger.info(f"✓ Respuesta enviada: {result}")
+        logger.info(f"✓ Respuesta enviada exitosamente: {result}")
         return result
     
     except Exception as e:
