@@ -1101,10 +1101,10 @@ async def get_logs(lines: int = 100):
     - lines: Número de líneas a retornar (default: 100)
     """
     try:
-        if not os.path.exists("gateway.log"):
+        if not os.path.exists(LOG_FILE):
             return "<pre>No logs yet</pre>"
         
-        with open("gateway.log", "r") as f:
+        with open(LOG_FILE, "r") as f:
             all_lines = f.readlines()
         
         # Obtener las últimas N líneas
@@ -1212,10 +1212,10 @@ async def get_logs_json(lines: int = 100):
     - lines: Número de líneas a retornar (default: 100)
     """
     try:
-        if not os.path.exists("gateway.log"):
+        if not os.path.exists(LOG_FILE):
             return {"logs": [], "total": 0}
         
-        with open("gateway.log", "r") as f:
+        with open(LOG_FILE, "r") as f:
             all_lines = f.readlines()
         
         # Obtener las últimas N líneas
