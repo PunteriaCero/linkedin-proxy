@@ -28,6 +28,9 @@ from voyager_helper import (
     extract_cookies_from_session
 )
 
+# 🌐 NUEVO: Importar LinkedIn automation
+from linkedin_login import login_and_extract_cookies_sync
+
 # ===== PATHS Y CONSTANTES (ANTES DE LOGGING) =====
 # Usar rutas que respeten los VOLUMEs de Docker
 if os.path.exists("/app/config"):
@@ -1530,6 +1533,128 @@ async def validate_cookies_endpoint(request: ValidateCookiesRequest):
         return {
             "success": False,
             "detail": f"{type(e).__name__}: {str(e)[:200]}"
+        }
+
+
+@app.post("/login-automated")
+async def login_automated(email: str = Form(...), password: str = Form(...)):
+    """
+    🌐 AUTOMATIZACIÓN DE LOGIN CON PYPPETEER
+    
+    Automatiza login en LinkedIn y extrae cookies.
+    ✅ Una sola IP (servidor) = LinkedIn lo acepta
+    ✅ Sin credenciales almacenadas
+    ✅ Credenciales descartadas después de login
+    
+    Form Parameters:
+    - email: LinkedIn email
+    - password: LinkedIn password
+    
+    Returns:
+    {
+        "success": true/false,
+        "user_name": "Usuario" (si success=true),
+        "detail": "mensaje",
+        "cookies_saved": true/false (si success=true)
+    }
+    
+    **IMPORTANTE:**
+    - Las credenciales se usan SOLO para login
+    - NO se guardan en config.json
+    - Solo se guardan las cookies extraídas
+    - El navegador se cierra después
+    """
+    
+    logger.info(f"=== ENDPOINT /login-automated - Autologin para {email} ===")
+    
+    try:
+        if not email or not password:
+            return {
+                "success": False,
+                "detail": "email y password son requeridos"
+            }
+        
+        logger.info(f"Iniciando login automatizado para {email}...")
+        
+        # Ejecutar login (bloqueante pero OK en FastAPI)
+        cookies = login_and_extract_cookies_sync(email, password, timeout=60)
+        
+        logger.info(f"✓ Login exitoso, {len(cookies)} cookies extraídas")
+        
+        if not cookies.get('li_at') or not cookies.get('JSESSIONID'):
+            logger.error("❌ Cookies requeridas no encontradas")
+            return {
+                "success": False,
+                "detail": "Login OK pero cookies requeridas (li_at/JSESSIONID) no encontradas"
+            }
+        
+        logger.info("Validando cookies con Voyager...")
+        
+        # Validar cookies con Voyager
+        is_valid, validation_msg, profile_data = validate_linkedin_cookies_voyager(
+            cookies.get('li_at'),
+            cookies.get('JSESSIONID'),
+            bcookie=cookies.get('bcookie', ''),
+            lidc=cookies.get('lidc', ''),
+            user_match_history=cookies.get('UserMatchHistory', ''),
+            aam_uuid=cookies.get('aam_uuid', '')
+        )
+        
+        if not is_valid:
+            logger.error(f"Cookies no válidas: {validation_msg}")
+            return {
+                "success": False,
+                "detail": f"Cookies extraídas pero validación falló: {validation_msg}"
+            }
+        
+        logger.info("✓ Cookies validadas exitosamente")
+        
+        # Guardar cookies en config
+        logger.info("Guardando cookies en config.json...")
+        config = load_config()
+        
+        # Normalizar nombres de cookies
+        cookie_mapping = {
+            'li_at': 'li_at',
+            'JSESSIONID': 'jsessionid',
+            'bcookie': 'bcookie',
+            'lidc': 'lidc',
+            'UserMatchHistory': 'user_match_history',
+            'aam_uuid': 'aam_uuid'
+        }
+        
+        for cookie_name, config_key in cookie_mapping.items():
+            if cookie_name in cookies and cookies[cookie_name]:
+                config[config_key] = cookies[cookie_name]
+                logger.info(f"✓ Guardado {config_key}")
+        
+        # Actualizar timestamp y status
+        config['last_sync'] = datetime.now().isoformat()
+        config['validation_status'] = 'verified'
+        
+        save_config(config)
+        logger.info("✓ Configuración guardada")
+        
+        user_name = profile_data.get('name', 'Unknown')
+        
+        logger.info(f"✅ Login automático exitoso para {user_name}")
+        
+        return {
+            "success": True,
+            "user_name": user_name,
+            "detail": f"Login automatizado exitoso. Cookies extraídas y validadas para {user_name}",
+            "cookies_saved": True,
+            "cookies_count": len(cookies)
+        }
+    
+    except Exception as e:
+        logger.error(f"❌ Error en /login-automated: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
+        
+        return {
+            "success": False,
+            "detail": f"{type(e).__name__}: {str(e)[:300]}"
         }
 
 
