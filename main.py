@@ -31,6 +31,9 @@ from voyager_helper import (
 # 🌐 NUEVO: Importar LinkedIn automation
 from linkedin_login import login_and_extract_cookies_sync
 
+# 🔐 NUEVO: Importar login interactivo (2FA)
+from linkedin_interactive import start_login_with_2fa, complete_login_with_code, cleanup_expired_sessions
+
 # ===== PATHS Y CONSTANTES (ANTES DE LOGGING) =====
 # Usar rutas que respeten los VOLUMEs de Docker
 if os.path.exists("/app/config"):
@@ -1655,6 +1658,197 @@ async def login_automated(email: str = Form(...), password: str = Form(...)):
         return {
             "success": False,
             "detail": f"{type(e).__name__}: {str(e)[:300]}"
+        }
+
+
+@app.post("/login-interactive-start")
+async def login_interactive_start(email: str = Form(...), password: str = Form(...)):
+    """
+    🔐 INTERACTIVE LOGIN - Step 1: Start login and wait for 2FA code
+    
+    Inicia el proceso de login interactivo.
+    Si LinkedIn pide verificación: devuelve session_id para paso 2.
+    Si no pide 2FA: devuelve cookies directamente.
+    
+    Form Parameters:
+    - email: LinkedIn email
+    - password: LinkedIn password
+    
+    Returns:
+    - Si requiere 2FA:
+    {
+        "status": "waiting_2fa",
+        "message": "Código enviado a tu email...",
+        "session_id": "xxx"
+    }
+    
+    - Si login exitoso sin 2FA:
+    {
+        "status": "success",
+        "cookies_count": 12,
+        "detail": "Listo para usar"
+    }
+    """
+    
+    logger.info(f"=== ENDPOINT /login-interactive-start ===")
+    
+    try:
+        if not email or not password:
+            return {"success": False, "detail": "email y password requeridos"}
+        
+        # Generate session ID
+        import uuid
+        session_id = str(uuid.uuid4())[:8]
+        
+        logger.info(f"Starting interactive login session: {session_id}")
+        
+        # Start login (will raise if error, or return waiting_2fa)
+        result = await start_login_with_2fa(email, password, session_id)
+        
+        if result['status'] == 'waiting_2fa':
+            logger.info(f"Session {session_id} waiting for 2FA code")
+            return result
+        
+        elif result['status'] == 'success':
+            # No 2FA required, cookies already extracted
+            logger.info("Login successful without 2FA, processing cookies...")
+            
+            cookies = result.get('cookies', {})
+            
+            # Validate and save
+            if not cookies.get('li_at') or not cookies.get('JSESSIONID'):
+                return {
+                    "success": False,
+                    "detail": "Login ok pero cookies requeridas no encontradas"
+                }
+            
+            # Save to config
+            config = load_config()
+            config['li_at'] = cookies.get('li_at')
+            config['jsessionid'] = cookies.get('JSESSIONID')
+            config['bcookie'] = cookies.get('bcookie', '')
+            config['lidc'] = cookies.get('lidc', '')
+            config['user_match_history'] = cookies.get('UserMatchHistory', '')
+            config['aam_uuid'] = cookies.get('aam_uuid', '')
+            config['last_sync'] = datetime.now().isoformat()
+            config['validation_status'] = 'verified'
+            save_config(config)
+            
+            logger.info("✅ Cookies saved successfully")
+            
+            return {
+                "success": True,
+                "status": "success",
+                "detail": "Login exitoso sin 2FA",
+                "cookies_count": len(cookies)
+            }
+    
+    except Exception as e:
+        logger.error(f"❌ Error: {e}")
+        return {
+            "success": False,
+            "detail": f"Error: {str(e)[:200]}"
+        }
+
+
+@app.post("/login-interactive-verify")
+async def login_interactive_verify(session_id: str = Form(...), verification_code: str = Form(...)):
+    """
+    🔐 INTERACTIVE LOGIN - Step 2: Complete login with 2FA code
+    
+    Completa el login ingresando el código de verificación.
+    
+    Form Parameters:
+    - session_id: ID retornado en paso 1
+    - verification_code: Código de 6 dígitos (o con espacios/guiones)
+    
+    Returns:
+    {
+        "success": true,
+        "detail": "Login completado",
+        "cookies_count": 12,
+        "user_name": "Tu Nombre"
+    }
+    """
+    
+    logger.info(f"=== ENDPOINT /login-interactive-verify ===")
+    
+    try:
+        if not session_id or not verification_code:
+            return {"success": False, "detail": "session_id y verification_code requeridos"}
+        
+        logger.info(f"Verifying session {session_id} with code...")
+        
+        # Complete login
+        result = await complete_login_with_code(session_id, verification_code)
+        
+        if result['status'] == 'success':
+            logger.info("✓ 2FA verification successful")
+            
+            cookies = result.get('cookies', {})
+            
+            # Validate required cookies
+            if not cookies.get('li_at') or not cookies.get('JSESSIONID'):
+                return {
+                    "success": False,
+                    "detail": "Verificación ok pero cookies requeridas no encontradas"
+                }
+            
+            logger.info("🍪 Saving cookies to config...")
+            
+            # Validate with Voyager
+            is_valid, validation_msg, profile_data = validate_linkedin_cookies_voyager(
+                cookies.get('li_at'),
+                cookies.get('JSESSIONID'),
+                bcookie=cookies.get('bcookie', ''),
+                lidc=cookies.get('lidc', ''),
+                user_match_history=cookies.get('UserMatchHistory', ''),
+                aam_uuid=cookies.get('aam_uuid', '')
+            )
+            
+            if not is_valid:
+                logger.error(f"Voyager validation failed: {validation_msg}")
+                return {
+                    "success": False,
+                    "detail": f"Cookies extraídas pero validación falló: {validation_msg}"
+                }
+            
+            logger.info("✓ Cookies validated with Voyager")
+            
+            # Save to config
+            config = load_config()
+            config['li_at'] = cookies.get('li_at')
+            config['jsessionid'] = cookies.get('JSESSIONID')
+            config['bcookie'] = cookies.get('bcookie', '')
+            config['lidc'] = cookies.get('lidc', '')
+            config['user_match_history'] = cookies.get('UserMatchHistory', '')
+            config['aam_uuid'] = cookies.get('aam_uuid', '')
+            config['last_sync'] = datetime.now().isoformat()
+            config['validation_status'] = 'verified'
+            save_config(config)
+            
+            logger.info("✅ Cookies saved successfully")
+            
+            user_name = profile_data.get('name', 'Unknown')
+            
+            return {
+                "success": True,
+                "detail": f"Login completado exitosamente para {user_name}",
+                "cookies_count": len(cookies),
+                "user_name": user_name
+            }
+    
+    except Exception as e:
+        logger.error(f"❌ Verification error: {e}")
+        
+        # Cleanup session
+        from linkedin_interactive import ACTIVE_SESSIONS
+        if session_id in ACTIVE_SESSIONS:
+            del ACTIVE_SESSIONS[session_id]
+        
+        return {
+            "success": False,
+            "detail": f"Error: {str(e)[:300]}"
         }
 
 
