@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LinkedIn WebSocket Client - Test</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+
+        .panel {
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            padding: 20px;
+        }
+
+        h1 {
+            color: #667eea;
+            margin-bottom: 20px;
+            font-size: 24px;
+        }
+
+        h2 {
+            color: #333;
+            margin: 20px 0 10px 0;
+            font-size: 18px;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 8px;
+        }
+
+        .status {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px;
+            border-radius: 5px;
+            margin-bottom: 15px;
+            font-weight: bold;
+        }
+
+        .status.connected {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+
+        .status.disconnected {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
+        .status.connecting {
+            background: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeeba;
+        }
+
+        .status::before {
+            content: '';
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: currentColor;
+            animation: pulse 1s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        button {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            margin: 5px 5px 5px 0;
+            transition: background 0.3s;
+        }
+
+        button:hover {
+            background: #764ba2;
+        }
+
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+
+        .button-group {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .messages {
+            background: #f8f9fa;
+            border-radius: 5px;
+            border: 1px solid #dee2e6;
+            height: 300px;
+            overflow-y: auto;
+            padding: 10px;
+            margin-bottom: 15px;
+        }
+
+        .message {
+            background: white;
+            border-left: 4px solid #667eea;
+            padding: 10px;
+            margin-bottom: 10px;
+            border-radius: 3px;
+            font-size: 12px;
+            line-height: 1.5;
+        }
+
+        .message.new-message {
+            border-left-color: #28a745;
+            background: #f0f8f4;
+        }
+
+        .message.status-message {
+            border-left-color: #007bff;
+            background: #f0f7ff;
+        }
+
+        .message.error {
+            border-left-color: #dc3545;
+            background: #fff5f5;
+            color: #721c24;
+        }
+
+        .message-time {
+            font-size: 11px;
+            color: #888;
+            margin-top: 5px;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+
+        .stat-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 15px;
+            border-radius: 5px;
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 28px;
+            font-weight: bold;
+            margin: 5px 0;
+        }
+
+        .stat-label {
+            font-size: 12px;
+            opacity: 0.9;
+        }
+
+        textarea {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-family: monospace;
+            font-size: 12px;
+            resize: vertical;
+        }
+
+        .section {
+            margin-bottom: 20px;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- LEFT PANEL: Connection -->
+        <div class="panel">
+            <h1>🔗 WebSocket Connection</h1>
+
+            <div id="connectionStatus" class="status disconnected">
+                DESCONECTADO
+            </div>
+
+            <div class="button-group">
+                <button onclick="connect()">Conectar</button>
+                <button onclick="disconnect()">Desconectar</button>
+                <button onclick="clearMessages()">Limpiar Mensajes</button>
+            </div>
+
+            <h2>📨 Mensajes Recibidos</h2>
+            <div class="messages" id="messagesContainer"></div>
+
+            <div class="stat-card">
+                <div class="stat-label">Total de Mensajes</div>
+                <div class="stat-value" id="messageCount">0</div>
+            </div>
+        </div>
+
+        <!-- RIGHT PANEL: APIs & Stats -->
+        <div class="panel">
+            <h1>📊 APIs & Estadísticas</h1>
+
+            <h2>Consultas</h2>
+            <div class="button-group">
+                <button onclick="fetchConversations()">GET /conversations</button>
+                <button onclick="fetchMonitorStats()">GET /monitor/stats</button>
+                <button onclick="testPing()">Test Ping</button>
+            </div>
+
+            <h2>Respuesta API</h2>
+            <textarea id="apiResponse" readonly style="height: 150px;"></textarea>
+
+            <h2>Configuración</h2>
+            <div style="margin-bottom: 10px;">
+                <label>
+                    Server URL:
+                    <input type="text" id="serverUrl" value="ws://localhost:8000" 
+                           style="width: 100%; padding: 5px; margin-top: 5px; border: 1px solid #ddd; border-radius: 3px;">
+                </label>
+            </div>
+
+            <h2>Estadísticas Locales</h2>
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-label">WebSocket Status</div>
+                    <div class="stat-value" id="wsStatus">-</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Conexión Uptime</div>
+                    <div class="stat-value" id="uptime">0s</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Tipo Último Mensaje</div>
+                    <div class="stat-value" id="lastMsgType">-</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Latencia (ping)</div>
+                    <div class="stat-value" id="latency">-</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let ws = null;
+        let messageCount = 0;
+        let connectedAt = null;
+        let lastPingTime = null;
+        let lastMessageType = '-';
+        let uptimeInterval = null;
+
+        const statusEl = document.getElementById('connectionStatus');
+        const messagesContainer = document.getElementById('messagesContainer');
+        const apiResponseEl = document.getElementById('apiResponse');
+        const serverUrlInput = document.getElementById('serverUrl');
+
+        function updateStatus(connected) {
+            if (connected) {
+                statusEl.className = 'status connected';
+                statusEl.textContent = '✅ CONECTADO';
+                document.getElementById('wsStatus').textContent = 'OPEN';
+                connectedAt = new Date();
+                startUptimeTimer();
+            } else {
+                statusEl.className = 'status disconnected';
+                statusEl.textContent = '❌ DESCONECTADO';
+                document.getElementById('wsStatus').textContent = 'CLOSED';
+                if (uptimeInterval) clearInterval(uptimeInterval);
+            }
+        }
+
+        function startUptimeTimer() {
+            if (uptimeInterval) clearInterval(uptimeInterval);
+            uptimeInterval = setInterval(() => {
+                if (connectedAt) {
+                    const uptime = Math.floor((new Date() - connectedAt) / 1000);
+                    document.getElementById('uptime').textContent = uptime + 's';
+                }
+            }, 1000);
+        }
+
+        function connect() {
+            const serverUrl = serverUrlInput.value;
+            const wsUrl = serverUrl + '/ws/messages';
+
+            statusEl.className = 'status connecting';
+            statusEl.textContent = '⏳ CONECTANDO...';
+
+            try {
+                ws = new WebSocket(wsUrl);
+
+                ws.onopen = () => {
+                    addMessage('✅ Conectado al servidor', 'status-message');
+                    updateStatus(true);
+                };
+
+                ws.onmessage = (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        lastMessageType = data.type || 'unknown';
+                        document.getElementById('lastMsgType').textContent = lastMessageType;
+
+                        handleMessage(data);
+                        messageCount++;
+                        document.getElementById('messageCount').textContent = messageCount;
+                    } catch (e) {
+                        addMessage('❌ Error parseando mensaje: ' + e.message, 'error');
+                    }
+                };
+
+                ws.onerror = (event) => {
+                    addMessage('❌ Error de WebSocket: ' + event, 'error');
+                };
+
+                ws.onclose = () => {
+                    addMessage('⚠️ Conexión cerrada', 'status-message');
+                    updateStatus(false);
+                };
+            } catch (e) {
+                addMessage('❌ Error conectando: ' + e.message, 'error');
+                updateStatus(false);
+            }
+        }
+
+        function disconnect() {
+            if (ws) {
+                ws.close();
+                updateStatus(false);
+                addMessage('✋ Desconexión manual', 'status-message');
+            }
+        }
+
+        function handleMessage(data) {
+            if (data.type === 'connection_status') {
+                addMessage('🔗 ' + (data.status || 'unknown'), 'status-message');
+            } else if (data.type === 'new_message') {
+                const msg = data.data;
+                addMessage(
+                    `📩 Nuevo mensaje de ${msg.participant_name}: "${msg.body.substring(0, 50)}..."`,
+                    'new-message'
+                );
+            } else if (data.type === 'pong') {
+                const latency = new Date() - lastPingTime;
+                document.getElementById('latency').textContent = latency + 'ms';
+                addMessage(`🏓 Pong recibido (latencia: ${latency}ms)`, 'status-message');
+            } else {
+                addMessage(`📨 ${JSON.stringify(data).substring(0, 100)}...`, 'status-message');
+            }
+        }
+
+        function addMessage(text, className = '') {
+            const time = new Date().toLocaleTimeString('es-ES');
+            const msgEl = document.createElement('div');
+            msgEl.className = 'message ' + className;
+            msgEl.innerHTML = `
+                ${text}
+                <div class="message-time">${time}</div>
+            `;
+            messagesContainer.appendChild(msgEl);
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
+
+        function clearMessages() {
+            messagesContainer.innerHTML = '';
+            messageCount = 0;
+            document.getElementById('messageCount').textContent = '0';
+        }
+
+        function testPing() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                lastPingTime = new Date();
+                ws.send('ping');
+                addMessage('🔹 Ping enviado...', 'status-message');
+            } else {
+                addMessage('❌ WebSocket no conectado', 'error');
+            }
+        }
+
+        async function fetchConversations() {
+            const serverUrl = serverUrlInput.value.replace('ws://', 'http://').replace('wss://', 'https://');
+            try {
+                const response = await fetch(serverUrl + '/conversations');
+                const data = await response.json();
+                apiResponseEl.value = JSON.stringify(data, null, 2);
+                addMessage(`✅ GET /conversations: ${data.conversations?.length || 0} conversaciones`, 'status-message');
+            } catch (e) {
+                apiResponseEl.value = 'Error: ' + e.message;
+                addMessage('❌ Error en GET /conversations: ' + e.message, 'error');
+            }
+        }
+
+        async function fetchMonitorStats() {
+            const serverUrl = serverUrlInput.value.replace('ws://', 'http://').replace('wss://', 'https://');
+            try {
+                const response = await fetch(serverUrl + '/monitor/stats');
+                const data = await response.json();
+                apiResponseEl.value = JSON.stringify(data, null, 2);
+                addMessage('✅ GET /monitor/stats: Estadísticas obtenidas', 'status-message');
+            } catch (e) {
+                apiResponseEl.value = 'Error: ' + e.message;
+                addMessage('❌ Error en GET /monitor/stats: ' + e.message, 'error');
+            }
+        }
+
+        // Auto-connect on load
+        window.addEventListener('load', () => {
+            addMessage('🚀 Cliente WebSocket cargado', 'status-message');
+            addMessage('Servidor: ' + serverUrlInput.value, 'status-message');
+        });
+
+        // Disconnect on page unload
+        window.addEventListener('beforeunload', () => {
+            if (ws) ws.close();
+        });
+    </script>
+</body>
+</html>
