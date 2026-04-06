@@ -6,3 +6,4 @@ linkedin-api==2.0.1
 python-multipart==0.0.6
 pydantic==2.5.0
 pyppeteer==1.0.2
+websockets==12.0
