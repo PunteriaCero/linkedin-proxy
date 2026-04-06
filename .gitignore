@@ -53,3 +53,24 @@ htmlcov/
 # OS
 .DS_Store
 Thumbs.db
+
+# Credenciales locales
+.linkedin_creds.json
+config.json
+.env
+.env.local
+
+# Logs
+*.log
+logs/
+
+# Datos
+data/
+processed_messages.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
