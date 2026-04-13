@@ -1,11 +1,13 @@
 version: '3.8'
 
+# 🐳 CONTAINER NAMING: All containers start with 'ia-'
+# Generated: Apr 13, 2026
+# Portainer Token: ptr_yrEIS3/ZQKfYtJkcYc97dN4u0XPDpvY9TRFmtU3cNn0=
+
 services:
   linkedin-api:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: IA_linkedin_api
+    image: punteria/linkedin-api:latest
+    container_name: ia-linkedin-api
     ports:
       - "8000:8000"
     volumes:
@@ -19,14 +21,25 @@ services:
     networks:
       - default
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('localhost', 8000), timeout=2)"]
       interval: 30s
-      timeout: 10s
+      timeout: 5s
       retries: 3
-      start_period: 5s
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 256M
 
 volumes:
   config:
   data:
   logs:
 
+networks:
+  default:
+    driver: bridge

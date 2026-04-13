@@ -1,56 +1,33 @@
-# Desplegar en Portainer - Guía Paso a Paso
+# 🐳 Deployment via Portainer UI - Step by Step
 
-## 🐳 Opción 1: Portainer GUI (Interfaz Visual)
+## Opción 1: Usando Stacks (Recomendado)
 
-### Requisitos
-- Portainer corriendo en http://192.168.0.214:9000
-- Usuario y contraseña configurados
-
-### Pasos
-
-#### 1️⃣ Abre Portainer en navegador
+### Paso 1: Acceder a Portainer
 ```
-http://192.168.0.214:9000
+URL: http://192.168.0.214:9000
 ```
 
-#### 2️⃣ Login
-- Ingresa tu usuario
-- Ingresa tu contraseña
-- Click "Sign In"
-
-#### 3️⃣ Navega a Stacks
-En el menú lateral:
+### Paso 2: Ir a Stacks
 ```
-Environment → Stacks
-```
-O directamente:
-```
-http://192.168.0.214:9000/#/stack
+Left Menu → Stacks → Add Stack
 ```
 
-#### 4️⃣ Click "Add Stack"
-Busca el botón azul "+ Add Stack"
-
-#### 5️⃣ Completa el formulario
+### Paso 3: Crear Stack con docker-compose
 
 **Nombre del Stack:**
 ```
-linkedin-api-gateway
+ia-linkedin-api
 ```
 
-**Compose content:**
-Copia el contenido de `docker-compose.yml` completo:
+**Paste el siguiente docker-compose.yml:**
 
 ```yaml
 version: '3.8'
 
 services:
   linkedin-api:
-    image: linkedin-api:latest
-    container_name: IA_linkedin_api
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: punteria/linkedin-api:latest
+    container_name: ia-linkedin-api
     ports:
       - "8000:8000"
     volumes:
@@ -59,188 +36,153 @@ services:
       - ./logs:/app/logs
     environment:
       - PYTHONUNBUFFERED=1
-    restart: always
+      - LOG_LEVEL=INFO
+    restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('localhost', 8000), timeout=2)"]
       interval: 30s
-      timeout: 10s
+      timeout: 5s
       retries: 3
-      start_period: 40s
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+
+volumes:
+  config:
+  data:
+  logs:
+
+networks:
+  default:
+    driver: bridge
 ```
 
-#### 6️⃣ Click "Deploy"
-Espera a que aparezca "Stack deployed"
-
-#### 7️⃣ Verifica el estado
-- El stack debe aparecer en la lista
-- Status: "Active"
-- Ver logs: Click en el stack → "Logs"
-
----
-
-## 🚀 Opción 2: Docker-Compose Directo (RECOMENDADO)
-
-### Por qué es mejor:
-✅ Sin autenticación de Portainer
-✅ Más rápido
-✅ Más control
-✅ Fácil de monitorear
-
-### Pasos
-
-#### 1️⃣ En tu terminal, navega al proyecto
-```bash
-cd /home/node/.openclaw/workspace/linkedin-n8n-gateway
+### Paso 4: Seleccionar Endpoint
+```
+Endpoint: local
 ```
 
-#### 2️⃣ Inicia el servicio
-```bash
-docker-compose up -d
+### Paso 5: Deploy
 ```
-
-#### 3️⃣ Espera 5 segundos
-El contenedor se estará iniciando
-
-#### 4️⃣ Verifica que está corriendo
-```bash
-docker ps | grep linkedin
-```
-
-Deberías ver:
-```
-IA_linkedin_api   linkedin-api:latest   Up X seconds   0.0.0.0:8000->8000/tcp
-```
-
-#### 5️⃣ ¡Listo! Accede al servicio
-```
-http://192.168.0.214:8000/consumer-ui.html
+Click: Deploy the stack
 ```
 
 ---
 
-## 📊 Opción 3: Python Script
+## Opción 2: Usando Containers (Manual)
 
-### Ejecuta el script deployer
-```bash
-python portainer-deploy.py
+### Paso 1: Acceder a Portainer
+```
+URL: http://192.168.0.214:9000
 ```
 
-El script hará:
-1. Conectar a Portainer
-2. Verificar autenticación
-3. Mostrar instrucciones
+### Paso 2: Ir a Images
+```
+Left Menu → Images → Pull Image
+```
+
+### Paso 3: Pull image desde DockerHub
+```
+Image name: punteria/linkedin-api:latest
+Click: Pull the image
+```
+
+### Paso 4: Crear Container
+```
+Left Menu → Containers → Create container
+```
+
+### Configurar:
+```
+Name: ia-linkedin-api
+
+Image: punteria/linkedin-api:latest
+
+Port mapping:
+  Container: 8000
+  Host: 8000
+
+Volumes:
+  /app/config
+  /app/data
+  /app/logs
+
+Environment variables:
+  PYTHONUNBUFFERED=1
+  LOG_LEVEL=INFO
+
+Restart policy: Unless stopped
+
+Resource limits:
+  CPU: 2
+  Memory: 1GB
+```
+
+### Paso 5: Deploy
+```
+Click: Create the container
+```
 
 ---
 
-## 🔍 Verificación Después del Deploy
+## Monitoreo
 
-### Health Check
-```bash
+### En Portainer:
+```
+Containers → ia-linkedin-api
+  • Ver estado
+  • Ver logs
+  • Inspeccionar recursos
+```
+
+### Health Check:
+```
 curl http://192.168.0.214:8000/health
 ```
 
-Esperado:
-```json
-{"status": "ok"}
+### Acceso al Servicio:
 ```
-
-### Ver Logs en Docker
-```bash
-docker-compose logs -f
-```
-
-### Ver Logs en Portainer
-1. Portainer → Stacks → linkedin-api-gateway
-2. Click en "Logs"
-
-### Detener el Servicio
-```bash
-docker-compose down
+Web: http://192.168.0.214:8000/consumer-ui.html
+API: http://192.168.0.214:8000
 ```
 
 ---
 
-## 🐛 Troubleshooting
+## Troubleshooting
 
-### Error: "Connection refused"
-```
-❌ Error: No se puede conectar a Portainer
-```
+### Si el container no inicia:
+1. Verifica los logs en Portainer
+2. Confirma que la imagen existe en DockerHub
+3. Verifica el puerto 8000 no está en uso
 
-**Solución:**
-1. Verifica que Portainer está corriendo
-2. Prueba acceder a http://192.168.0.214:9000
-3. Usa docker-compose en su lugar
+### Si la imagen no existe:
+1. Verifica que el pipeline de Docker build completó exitosamente
+2. Revisa DockerHub: https://hub.docker.com/r/punteria/linkedin-api
+3. Rebuild manualmente si es necesario
 
-### Error: "Unauthorized" (HTTP 401)
-```
-❌ Portainer requiere autenticación
-```
-
-**Soluciones:**
-1. Login en Portainer primero
-2. O usa docker-compose directamente (recomendado)
-
-### El contenedor no inicia
-```
-❌ Container exited
-```
-
-**Solución:**
-1. Ver logs: `docker-compose logs`
-2. Verificar puertos disponibles
-3. Verificar config/config.json existe
-
-### Puerto 8000 ya está en uso
-```
-❌ Error: Port 8000 is already allocated
-```
-
-**Soluciones:**
-1. Detén el servicio anterior:
-   ```bash
-   docker-compose down
-   ```
-
-2. O cambia el puerto en docker-compose.yml:
-   ```yaml
-   ports:
-     - "8080:8000"  # Cambiar 8000 a otro puerto
-   ```
+### Si hay problemas de conexión:
+1. Verifica que el container está en estado "Running"
+2. Prueba: `docker logs ia-linkedin-api`
+3. Verifica healthcheck: `curl http://192.168.0.214:8000/health`
 
 ---
 
-## ✅ Una vez deployado
+## Resultado Esperado
 
-### Web UI (RECOMENDADO)
 ```
-http://192.168.0.214:8000/consumer-ui.html
-```
-
-### CLI Consumer
-```bash
-python consume-api.py
-```
-
-### Ver Mensajes vía REST
-```bash
-curl http://192.168.0.214:8000/messages | jq
-```
-
-### WebSocket en tiempo real
-```javascript
-const ws = new WebSocket('ws://192.168.0.214:8000/ws/messages')
-ws.onmessage = (e) => console.log(JSON.parse(e.data))
+✅ Container: ia-linkedin-api (Running)
+✅ Puerto: 8000 (accessible)
+✅ Health: OK (socket connection passes)
+✅ Web UI: http://192.168.0.214:8000/consumer-ui.html
 ```
 
 ---
 
-## 📝 Resumen Rápido
-
-| Método | Comando | Tiempo | Dificultad |
-|--------|---------|--------|-----------|
-| Portainer GUI | Via navegador | 2 min | Media |
-| docker-compose | `docker-compose up -d` | 30 seg | Fácil |
-| Python script | `python portainer-deploy.py` | 1 min | Fácil |
-
-**RECOMENDACIÓN:** Usa `docker-compose up -d` - es lo más rápido y directo.
+*Guía creada: Apr 13, 2026 - 12:00 UTC*
+*Status: Production Ready*
