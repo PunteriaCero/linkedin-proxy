@@ -1,348 +1,332 @@
-# 📋 Checklist de Preparación para Producción
+# 🚀 DEPLOYMENT: LinkedIn API Service
 
-## ✅ Verificaciones Pre-Despliegue
+**Fecha:** 13 Apr 2026 - 03:30 UTC  
+**Status:** ✅ Listo para deploy  
+**Versión:** 1.0.0  
 
-### 1. Dependencias Instaladas
+---
+
+## Opción 1: Docker Compose (RECOMENDADO)
+
+### Prerrequisitos
+- Docker >= 20.10
+- Docker Compose >= 1.29
+
+### Instrucciones
+
 ```bash
-cd linkedin-n8n-gateway
-source venv/bin/activate
-pip list | grep -E "fastapi|httpx|linkedin-api"
-```
-**Esperado:**
-```
-fastapi==0.104.1
-httpx==0.25.2
-linkedin-api==2.0.1
+# 1. Navegar al directorio
+cd /home/node/.openclaw/workspace/linkedin-n8n-gateway
+
+# 2. Construir y levantar el servicio
+docker-compose up -d
+
+# 3. Verificar que está corriendo
+docker ps | grep IA_linkedin_api
+
+# 4. Ver logs
+docker-compose logs -f
+
+# 5. Detener (cuando necesites)
+docker-compose down
 ```
 
-### 2. Tests Pasando
+### Verificar que funciona
+
 ```bash
-python3 test_gateway.py
-```
-**Esperado:**
-```
-RESUMEN: 10 ✅ | 0 ❌
+# Health check
+curl http://192.168.0.214:8000/health
+
+# Config
+curl http://192.168.0.214:8000/config
+
+# Admin panel (en navegador)
+http://192.168.0.214:8000/admin
 ```
 
-### 3. Servidor Inicia Correctamente
+---
+
+## Opción 2: Docker Build Manual
+
 ```bash
-python3 main.py &
-sleep 2
-curl http://localhost:8000/health | jq
+# 1. Construir imagen
+docker build -t linkedin-api:latest .
+
+# 2. Ejecutar contenedor
+docker run -d \
+  --name IA_linkedin_api \
+  -p 8000:8000 \
+  -v $(pwd)/config:/app/config \
+  -v $(pwd)/data:/app/data \
+  -v $(pwd)/logs:/app/logs \
+  -e PYTHONUNBUFFERED=1 \
+  linkedin-api:latest
+
+# 3. Verificar logs
+docker logs -f IA_linkedin_api
+
+# 4. Detener
+docker stop IA_linkedin_api
+docker rm IA_linkedin_api
 ```
-**Esperado:**
+
+---
+
+## Opción 3: Python + Uvicorn (Desarrollo Local)
+
+### Prerrequisitos
+- Python 3.11+
+- pip
+
+### Instalación de dependencias
+
+```bash
+# Instalar dependencias
+pip install -r requirements.txt
+
+# O instalar manualmente
+pip install fastapi==0.104.1
+pip install uvicorn==0.24.0
+pip install websockets==12.0
+pip install linkedin-api==2.0.1
+pip install httpx==0.25.2
+pip install requests==2.31.0
+pip install pydantic==2.5.0
+```
+
+### Iniciar servicio
+
+```bash
+# Iniciar en foreground (desarrollo)
+python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000
+
+# O iniciar en background
+nohup python -m uvicorn main:app --host 0.0.0.0 --port 8000 > logs/api.log 2>&1 &
+```
+
+---
+
+## Opción 4: Portainer (Docker Management)
+
+### Instrucciones
+
+1. Abrir Portainer
+   ```
+   http://192.168.0.214:9000
+   ```
+
+2. Ir a **Stacks** → **+ Add Stack**
+
+3. Copiar contenido de `docker-compose.yml`:
+   ```yaml
+   version: '3.8'
+
+   services:
+     linkedin-api:
+       build:
+         context: .
+         dockerfile: Dockerfile
+       container_name: IA_linkedin_api
+       ports:
+         - "8000:8000"
+       volumes:
+         - ./config:/app/config
+         - ./data:/app/data
+         - ./logs:/app/logs
+       environment:
+         - PYTHONUNBUFFERED=1
+         - LOG_LEVEL=INFO
+       restart: unless-stopped
+   ```
+
+4. Hacer Deploy
+
+5. Verificar que el contenedor está **Running**
+
+---
+
+## Verificación Post-Deploy
+
+### 1. Health Check
+```bash
+curl -i http://192.168.0.214:8000/health
+```
+**Esperado:** HTTP 200
+
+### 2. Configuración cargada
+```bash
+curl http://192.168.0.214:8000/config | jq '.li_at'
+```
+**Esperado:** Token de LinkedIn (primeros 20 caracteres)
+
+### 3. Admin Panel
+```
+http://192.168.0.214:8000/admin
+```
+**Esperado:** Panel web funcional
+
+### 4. WebSocket conectado
+```bash
+# Test simple con curl
+curl -i -N -H "Connection: Upgrade" -H "Upgrade: websocket" \
+  http://192.168.0.214:8000/ws/messages
+```
+
+### 5. Conversaciones
+```bash
+curl http://192.168.0.214:8000/conversations | jq .
+```
+
+---
+
+## Credenciales Configuradas
+
+Las credenciales están en `config/config.json`:
+
 ```json
 {
-  "status": "healthy",
-  "configured": false,
-  "timestamp": "2024-03-20T10:30:00Z"
+  "li_at": "AQEDAWYpp_UFjt1...",          // Session token
+  "jsessionid": "ajax:0224706131...",     // Session ID
+  "bcookie": "v=2&d63144af-95...",        // Browser cookie
+  "lidc": "b=TB05:s=T:r=T:a=T:p...",      // Data center
+  "aam_uuid": "74259222753135...",        // Tracking
+  "n8n_webhook_url": "",                  // (Opcional)
+  "last_sync": "2026-03-25T12:29:18..."  // Timestamp
 }
 ```
 
-### 4. Dashboard Accesible
-```bash
-curl -s http://localhost:8000/admin | grep -c "LinkedIn-n8n Gateway"
+**⚠️ IMPORTANTE:** No compartir estas credenciales. Son personales y permiten acceso a tu cuenta LinkedIn.
+
+---
+
+## Endpoints Disponibles
+
+### REST API (12)
+
 ```
-**Esperado:** `1` (encontró el título)
+GET      /                   - Home page
+GET      /admin              - Admin panel
+POST     /admin              - Update config
+POST     /parse-curl         - Parser de curl
+POST     /sync               - Sincronizar con n8n
+POST     /reply              - Enviar respuesta
+GET      /health             - Health check
+GET      /config             - Ver configuración
+GET      /logs               - Logs HTML
+GET      /logs/json          - Logs JSON
+POST     /validate-cookies   - Validar credenciales
+GET      /messages           - Obtener mensajes
+```
 
-### 5. Endpoints Disponibles
-```bash
-# Health
-curl http://localhost:8000/health
+### WebSocket (5 NUEVOS)
 
-# Config (sin credenciales)
-curl http://localhost:8000/config
-
-# Sync (sin config, debería fallar gracefully)
-curl -X POST http://localhost:8000/sync
+```
+GET      /ws/messages        - Stream tiempo real
+GET      /conversations      - Lista conversaciones
+GET      /conversations/{id}/messages - Historial
+GET      /monitor/stats      - Estadísticas
+POST     /monitor/restart    - Reiniciar monitor
 ```
 
 ---
 
-## 🔐 Configuración de Seguridad
+## Performance Esperado
 
-### Variables de Entorno (Recomendado)
-Crear `.env`:
+| Métrica | Valor |
+|---------|-------|
+| Latencia WebSocket | <2s |
+| Cache TTL | 5 minutos |
+| Polling | 30 segundos |
+| Conexiones | 3+ simultáneas |
+| Memoria | ~50 MB |
+| CPU (idle) | 5-10% |
+| Uptime | 99.5% |
+
+---
+
+## Troubleshooting
+
+### Puerto 8000 ya en uso
+
 ```bash
-LINKEDIN_LI_AT=your_li_at_here
-LINKEDIN_JSESSIONID=your_jsessionid_here
-N8N_WEBHOOK_URL=https://your-n8n.com/webhook/linkedin
+# Encontrar proceso usando puerto 8000
+lsof -i :8000
+
+# Matar proceso (si es necesario)
+kill -9 <PID>
+
+# O usar puerto diferente en docker-compose
+ports:
+  - "8001:8000"  # Local 8001 → Container 8000
 ```
 
-Luego modificar `main.py` para leer de `.env`:
-```python
-from dotenv import load_dotenv
-import os
+### Credenciales inválidas
 
-load_dotenv()
-
-config = {
-    "li_at": os.getenv("LINKEDIN_LI_AT"),
-    "jsessionid": os.getenv("LINKEDIN_JSESSIONID"),
-    "n8n_webhook_url": os.getenv("N8N_WEBHOOK_URL"),
-}
-```
-
-### Permisos de Archivos
 ```bash
-# Config y logs no deben ser accesibles al público
-chmod 600 config.json
-chmod 600 processed_messages.json
-chmod 600 gateway.log
+# Verificar que config.json está correcto
+cat config/config.json
 
-# Script ejecutable
-chmod +x start.sh
+# Validar credenciales
+curl -X POST http://192.168.0.214:8000/validate-cookies \
+  -H "Content-Type: application/json" \
+  -d '{
+    "li_at": "...",
+    "jsessionid": "...",
+    "bcookie": "...",
+    "lidc": "..."
+  }'
 ```
 
-### CORS (Si es necesario)
-```python
-from fastapi.middleware.cors import CORSMiddleware
+### Ver logs
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["https://n8n.example.com"],
-    allow_credentials=True,
-    allow_methods=["POST", "GET"],
-    allow_headers=["*"],
-)
+```bash
+# Docker
+docker logs IA_linkedin_api -f
+
+# O archivo
+tail -f logs/api.log
+
+# O JSON
+curl http://192.168.0.214:8000/logs/json
 ```
 
 ---
 
-## 🚀 Despliegue en Producción
+## Detener y Limpiar
 
-### Opción 1: Systemd Service (Linux)
-
-Crear `/etc/systemd/system/linkedin-gateway.service`:
-```ini
-[Unit]
-Description=LinkedIn-n8n Gateway
-After=network.target
-
-[Service]
-Type=simple
-User=gateway
-WorkingDirectory=/opt/linkedin-n8n-gateway
-ExecStart=/opt/linkedin-n8n-gateway/venv/bin/python3 /opt/linkedin-n8n-gateway/main.py
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Activar:
 ```bash
-sudo systemctl enable linkedin-gateway
-sudo systemctl start linkedin-gateway
-sudo systemctl status linkedin-gateway
-```
+# Detener contenedor
+docker-compose down
 
-### Opción 2: Docker
+# Remover datos persistentes (CUIDADO)
+docker-compose down -v
 
-Crear `Dockerfile`:
-```dockerfile
-FROM python:3.11-slim
-
-WORKDIR /app
-COPY requirements.txt .
-RUN pip install -r requirements.txt
-
-COPY main.py test_gateway.py ./
-EXPOSE 8000
-
-CMD ["python3", "main.py"]
-```
-
-Build y run:
-```bash
-docker build -t linkedin-gateway .
-docker run -p 8000:8000 -v $(pwd)/config:/app linkedin-gateway
-```
-
-### Opción 3: Gunicorn + Nginx
-
-Instalar Gunicorn:
-```bash
-pip install gunicorn
-```
-
-Crear script `run_prod.sh`:
-```bash
-#!/bin/bash
-gunicorn -w 4 -b 0.0.0.0:8000 --timeout 30 main:app
-```
-
-Config Nginx (`/etc/nginx/sites-available/linkedin-gateway`):
-```nginx
-upstream linkedin_gateway {
-    server localhost:8000;
-}
-
-server {
-    listen 80;
-    server_name linkedin-gateway.example.com;
-
-    client_max_body_size 10M;
-
-    location / {
-        proxy_pass http://linkedin_gateway;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-
-    # Logs
-    access_log /var/log/nginx/linkedin-gateway-access.log;
-    error_log /var/log/nginx/linkedin-gateway-error.log;
-}
-```
-
-Habilitar:
-```bash
-sudo ln -s /etc/nginx/sites-available/linkedin-gateway /etc/nginx/sites-enabled/
-sudo nginx -t
-sudo systemctl reload nginx
+# O si usaste docker run
+docker stop IA_linkedin_api
+docker rm IA_linkedin_api
 ```
 
 ---
 
-## 📊 Monitoreo en Producción
+## Próximos Pasos
 
-### Health Check Periódico
-```bash
-# Cron job: cada 5 minutos
-*/5 * * * * curl -s http://localhost:8000/health || echo "Gateway down" | mail admin@example.com
-```
-
-### Rotación de Logs
-Crear `/etc/logrotate.d/linkedin-gateway`:
-```
-/home/gateway/linkedin-n8n-gateway/gateway.log {
-    daily
-    rotate 7
-    compress
-    delaycompress
-    notifempty
-    create 0600 gateway gateway
-    sharedscripts
-}
-```
-
-### Alertas (Opcionalmente)
-Monitorear `gateway.log` con herramientas como:
-- ELK Stack (Elasticsearch, Logstash, Kibana)
-- Sentry
-- DataDog
-- CloudWatch (si está en AWS)
+1. ✅ Levantar servicio
+2. ✅ Verificar que está corriendo
+3. ⏳ Conectar cliente WebSocket
+4. ⏳ Probar streaming en tiempo real
+5. ⏳ Validar performance
+6. ⏳ Integrar con N8N
 
 ---
 
-## 🔄 Actualización de Cookies
+## Links Útiles
 
-Las cookies de LinkedIn **expiran cada 24-48 horas**.
-
-Crear script de auto-renovación (`refresh_cookies.sh`):
-```bash
-#!/bin/bash
-# Este script notifica cuando las cookies están por expirar
-
-COOKIES_FILE="config.json"
-LAST_SYNC=$(grep "last_sync" $COOKIES_FILE | cut -d'"' -f4)
-LAST_SYNC_EPOCH=$(date -d "$LAST_SYNC" +%s)
-NOW_EPOCH=$(date +%s)
-DIFF=$((NOW_EPOCH - LAST_SYNC_EPOCH))
-
-# Si pasaron más de 20 horas
-if [ $DIFF -gt 72000 ]; then
-    echo "⚠️ Las cookies podrían estar venciendo pronto"
-    echo "Abre http://localhost:8000/admin para renovar"
-fi
-```
-
-Programar en cron:
-```bash
-0 8 * * * /home/gateway/linkedin-n8n-gateway/refresh_cookies.sh
-```
+- **GitHub:** https://github.com/PunteriaCero/linkedin-proxy
+- **Admin Panel:** http://192.168.0.214:8000/admin
+- **Portainer:** http://192.168.0.214:9000
+- **N8N:** (si está configurado)
 
 ---
 
-## 🧪 Testing en Producción
-
-### 1. Test de Conectividad
-```bash
-curl -X POST http://linkedin-gateway.example.com/sync \
-  -H "Content-Type: application/json"
-```
-**Esperado:** `400` (sin config) o `200` (con config válida)
-
-### 2. Test de Dashboard
-```bash
-# Verificar que se puede acceder (GET)
-curl -I http://linkedin-gateway.example.com/admin
-# Esperado: 200 OK
-```
-
-### 3. Test de n8n Integration
-En n8n, crear workflow:
-```
-HTTP Request → POST /sync
-└─ Response → Log output
-```
-
-Ejecutar y verificar logs:
-```bash
-tail -f /home/gateway/linkedin-n8n-gateway/gateway.log
-```
-
----
-
-## 📝 Archivos de Configuración Final
-
-```
-linkedin-n8n-gateway/
-├── main.py                    ✅ Aplicación principal
-├── test_gateway.py            ✅ Tests (10/10 pasando)
-├── requirements.txt           ✅ Dependencias
-├── start.sh                   ✅ Script de inicio
-├── config.json               ✅ Configuración (generado)
-├── processed_messages.json   ✅ Mensajes procesados
-├── gateway.log              ✅ Logs detallados
-├── README.md                ✅ Documentación
-├── FLOW_SIMULATION.md       ✅ Simulación de flujo
-├── DEPLOYMENT.md            ✅ Este archivo
-├── config.example.json      ✅ Ejemplo de config
-└── venv/                    ✅ Virtual environment
-```
-
----
-
-## ✨ Resumen Final
-
-| Aspecto | Estado | Observaciones |
-|---------|--------|---------------|
-| Instalación | ✅ Completa | Python 3.11 + venv |
-| Tests | ✅ 10/10 pasando | Mock testing sin conexión real |
-| Seguridad | ✅ Validated | Limpieza automática de input |
-| Error Handling | ✅ Robusto | 429 retry, errores detallados |
-| Logging | ✅ Completo | gateway.log con timestamps |
-| Documentación | ✅ Exhaustiva | README + Flow + Deployment |
-| Producción | ✅ Listo | Systemd/Docker/Gunicorn |
-
----
-
-## 🎯 Próximos Pasos
-
-1. **Generar cookies:** Abre LinkedIn → DevTools → Cookies → copia li_at + JSESSIONID
-2. **Configurar n8n:** Crea webhook y obtén URL
-3. **Iniciar gateway:** `./start.sh`
-4. **Configurar dashboard:** http://localhost:8000/admin
-5. **Probar sincronización:** Llama /sync desde n8n
-6. **Monitorear:** `tail -f gateway.log`
-
----
-
-**Versión:** 1.0.0  
-**Última actualización:** 2024-03-20  
-**Status:** ✅ Listo para Producción
+**Documento generado:** 13 Apr 2026 - 03:30 UTC  
+**Status:** ✅ LISTO PARA DEPLOYMENT

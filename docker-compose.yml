@@ -1,40 +1,32 @@
 version: '3.8'
 
 services:
-  linkedin-gateway:
-    build: .
-    container_name: linkedin-n8n-gateway
+  linkedin-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: IA_linkedin_api
     ports:
       - "8000:8000"
-    
-    # ===== VOLUMES PARA PERSISTENCIA =====
     volumes:
-      # Configuración
-      - ./config.json:/app/config.json:rw
-      - ./processed_messages.json:/app/processed_messages.json:rw
-      - ./data:/app/data:rw
-      
-      # Logs - accesibles desde host
-      - ./logs:/app/logs:rw
-    
+      - ./config:/app/config
+      - ./data:/app/data
+      - ./logs:/app/logs
     environment:
       - PYTHONUNBUFFERED=1
-    
+      - LOG_LEVEL=INFO
+    restart: unless-stopped
+    networks:
+      - default
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 5s
-    
-    restart: unless-stopped
-    networks:
-      - linkedin-n8n
-    
-    # Asegurar que el contenedor puede escribir en volúmenes
-    user: root
 
-networks:
-  linkedin-n8n:
-    driver: bridge
+volumes:
+  config:
+  data:
+  logs:
 

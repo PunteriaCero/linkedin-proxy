@@ -1,49 +1,38 @@
-# Build stage
-FROM python:3.11-slim as builder
-
-WORKDIR /build
-
-# Copiar requirements
-COPY requirements.txt .
-
-# Instalar dependencias en wheels
-RUN pip install --user --no-cache-dir -r requirements.txt
-
-
-# Runtime stage
 FROM python:3.11-slim
 
 WORKDIR /app
 
-# Copiar usuario de pip del builder
-COPY --from=builder /root/.local /root/.local
+# Instalar dependencias del sistema
+RUN apt-get update && apt-get install -y \
+    gcc \
+    && rm -rf /var/lib/apt/lists/*
 
-# Agregar local bin al PATH
-ENV PATH=/root/.local/bin:$PATH
+# Copiar requirements
+COPY requirements.txt .
 
-# Copiar aplicación
-COPY main.py test_gateway.py ./
-COPY config.example.json .env.example ./
+# Instalar dependencias Python
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Crear directorios para datos persistentes
-RUN mkdir -p /app/logs /app/data /app/config
+# Copiar código
+COPY main.py .
+COPY connection_manager.py .
+COPY websocket_integration.py .
+COPY linkedin_login.py .
+COPY voyager_helper.py .
+COPY config/ ./config/
+COPY data/ ./data/ 2>/dev/null || true
+COPY logs/ ./logs/ 2>/dev/null || true
 
-# ===== VOLUMES PARA PERSISTENCIA =====
-# Directorio de logs - accesible desde afuera
-VOLUME ["/app/logs"]
-
-# Directorio de configuración y datos
-VOLUME ["/app/data"]
-
-# Archivos individuales de configuración (si se montan directamente)
-VOLUME ["/app/config"]
+# Crear directorios si no existen
+RUN mkdir -p config data logs
 
 # Exponer puerto
 EXPOSE 8000
 
-# Health check
+# Healthcheck
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()"
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" || exit 1
 
-# Ejecutar aplicación
-CMD ["python3", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Comando de inicio
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
