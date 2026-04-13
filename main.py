@@ -95,10 +95,6 @@ app = FastAPI(
     openapi_url="/openapi.json"
 )
 
-# 🚀 NUEVO: Setup WebSocket integration
-setup_websocket_lifespan(app, load_config, create_linkedin_client_with_cookies)
-setup_websocket_endpoints(app, load_config)
-
 
 # ===== UTILIDADES =====
 def load_config() -> Dict[str, Any]:
@@ -1657,6 +1653,15 @@ async def get_messages():
             "conversations": [],
             "total": 0
         }
+
+
+# 🚀 SETUP WebSocket integration (DESPUÉS de definiciones)
+try:
+    setup_websocket_lifespan(app, load_config, create_linkedin_client_with_cookies)
+    setup_websocket_endpoints(app, load_config)
+    logger.info("✅ WebSocket integration configurada correctamente")
+except Exception as e:
+    logger.error(f"⚠️ Error configurando WebSocket: {e}")
 
 
 if __name__ == "__main__":
