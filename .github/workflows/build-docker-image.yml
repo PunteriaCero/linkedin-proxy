@@ -73,11 +73,13 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ secrets.DOCKER_USER }}/${{ env.IMAGE_NAME }}:buildcache
           cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ secrets.DOCKER_USER }}/${{ env.IMAGE_NAME }}:buildcache,mode=max
+        continue-on-error: false
 
       - name: 📋 Deployment summary
+        if: success()
         run: |
           echo "════════════════════════════════════════════════════"
-          echo "✅ DOCKER IMAGE BUILD & PUSH"
+          echo "✅ DOCKER IMAGE BUILD & PUSH - SUCCESS"
           echo "════════════════════════════════════════════════════"
           echo ""
           echo "🐳 Image Details:"
@@ -89,6 +91,10 @@ jobs:
           echo "🌐 Full Image:"
           echo "   ${{ env.REGISTRY }}/${{ secrets.DOCKER_USER }}/${{ env.IMAGE_NAME }}:latest"
           echo ""
+          echo "📊 Metadata:"
+          echo "   Tags: ${{ steps.meta.outputs.tags }}"
+          echo "   Labels: ${{ steps.meta.outputs.labels }}"
+          echo ""
           echo "🌐 DockerHub:"
           echo "   https://hub.docker.com/r/${{ secrets.DOCKER_USER }}/${{ env.IMAGE_NAME }}"
           echo ""
@@ -99,16 +105,58 @@ jobs:
           echo ""
           echo "════════════════════════════════════════════════════"
 
+      - name: ❌ Build failure diagnostics
+        if: failure()
+        run: |
+          echo "════════════════════════════════════════════════════"
+          echo "❌ DOCKER IMAGE BUILD FAILED"
+          echo "════════════════════════════════════════════════════"
+          echo ""
+          echo "Debug Information:"
+          echo "   • Workflow: ${{ github.workflow }}"
+          echo "   • Job: ${{ github.job }}"
+          echo "   • Commit: ${{ github.sha }}"
+          echo "   • Branch: ${{ github.ref }}"
+          echo "   • Actor: ${{ github.actor }}"
+          echo ""
+          echo "Check logs above for detailed error messages"
+          echo ""
+          echo "Common Issues:"
+          echo "   1. Dockerfile syntax errors"
+          echo "   2. Missing files in context"
+          echo "   3. Docker Hub authentication failed"
+          echo "   4. Insufficient disk space in runner"
+          echo ""
+          echo "═════════════════════════════════════════════════════"
+
   notify:
     needs: build
     runs-on: ubuntu-latest
     if: always()
     
     steps:
-      - name: 📢 Build status
+      - name: ✅ Build success notification
+        if: needs.build.result == 'success'
         run: |
-          if [ "${{ needs.build.result }}" = "success" ]; then
-            echo "✅ Docker image built and pushed successfully"
-          else
-            echo "⚠️ Docker image build completed with issues"
-          fi
+          echo "════════════════════════════════════════════════════"
+          echo "✅ BUILD PIPELINE - SUCCESS"
+          echo "════════════════════════════════════════════════════"
+          echo ""
+          echo "Docker image successfully built and pushed to DockerHub"
+          echo "Ready for Portainer deployment"
+          echo ""
+          echo "════════════════════════════════════════════════════"
+
+      - name: ❌ Build failure notification
+        if: needs.build.result != 'success'
+        run: |
+          echo "════════════════════════════════════════════════════"
+          echo "❌ BUILD PIPELINE - FAILED"
+          echo "════════════════════════════════════════════════════"
+          echo ""
+          echo "Docker image build failed. Check workflow logs for details."
+          echo ""
+          echo "https://github.com/PunteriaCero/linkedin-proxy/actions"
+          echo ""
+          echo "════════════════════════════════════════════════════"
+          exit 1
