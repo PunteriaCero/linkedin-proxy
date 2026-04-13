@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LinkedIn API Consumer - Mensajes en Tiempo Real</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+        }
+        
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+        
+        .header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+        
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        
+        .card {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            transition: transform 0.3s, box-shadow 0.3s;
+        }
+        
+        .card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 15px 40px rgba(0,0,0,0.3);
+        }
+        
+        .card h2 {
+            color: #667eea;
+            margin-bottom: 15px;
+            font-size: 1.3em;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 10px;
+        }
+        
+        .status {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin: 10px 0;
+            padding: 10px;
+            background: #f5f5f5;
+            border-radius: 5px;
+        }
+        
+        .status-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+        
+        .status-dot.green { background: #4caf50; }
+        .status-dot.red { background: #f44336; }
+        .status-dot.yellow { background: #ff9800; }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        .button {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 1em;
+            margin: 10px 5px 10px 0;
+            transition: background 0.3s;
+        }
+        
+        .button:hover {
+            background: #764ba2;
+        }
+        
+        .button.secondary {
+            background: #999;
+        }
+        
+        .button.secondary:hover {
+            background: #777;
+        }
+        
+        .messages-list {
+            max-height: 400px;
+            overflow-y: auto;
+            margin-top: 15px;
+        }
+        
+        .message-item {
+            background: #f9f9f9;
+            padding: 10px;
+            margin: 5px 0;
+            border-left: 4px solid #667eea;
+            border-radius: 3px;
+            font-size: 0.9em;
+        }
+        
+        .message-from {
+            font-weight: bold;
+            color: #667eea;
+        }
+        
+        .message-time {
+            color: #999;
+            font-size: 0.85em;
+        }
+        
+        .message-body {
+            margin-top: 5px;
+            color: #333;
+        }
+        
+        .conversations-list {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        
+        .conversation-item {
+            background: #f9f9f9;
+            padding: 10px;
+            margin: 5px 0;
+            border-left: 4px solid #764ba2;
+            border-radius: 3px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        
+        .conversation-item:hover {
+            background: #f0f0f0;
+        }
+        
+        .conversation-name {
+            font-weight: bold;
+            color: #333;
+        }
+        
+        .conversation-info {
+            font-size: 0.85em;
+            color: #999;
+            margin-top: 3px;
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 10px;
+            margin-top: 15px;
+        }
+        
+        .stat {
+            background: #f0f0f0;
+            padding: 15px;
+            border-radius: 5px;
+            text-align: center;
+        }
+        
+        .stat-value {
+            font-size: 1.8em;
+            font-weight: bold;
+            color: #667eea;
+        }
+        
+        .stat-label {
+            font-size: 0.9em;
+            color: #666;
+            margin-top: 5px;
+        }
+        
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 10px 0;
+            border-left: 4px solid #f44336;
+        }
+        
+        .success {
+            background: #d4edda;
+            color: #155724;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 10px 0;
+            border-left: 4px solid #4caf50;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 20px;
+        }
+        
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .info-box {
+            background: #e3f2fd;
+            border-left: 4px solid #2196f3;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 10px 0;
+            color: #1565c0;
+        }
+        
+        .code {
+            background: #f5f5f5;
+            padding: 10px;
+            border-radius: 3px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            overflow-x: auto;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔗 LinkedIn API Consumer</h1>
+            <p>Mensajes en Tiempo Real - API Gateway</p>
+        </div>
+        
+        <div class="grid">
+            <!-- Health & Config -->
+            <div class="card">
+                <h2>🏥 Estado del Servicio</h2>
+                <div class="status">
+                    <div class="status-dot red" id="health-dot"></div>
+                    <span id="health-status">Conectando...</span>
+                </div>
+                <div id="config-info"></div>
+                <button class="button" onclick="checkHealth()">Verificar Salud</button>
+                <button class="button secondary" onclick="getConfig()">Cargar Config</button>
+            </div>
+            
+            <!-- Últimos Mensajes -->
+            <div class="card">
+                <h2>💬 Últimos Mensajes</h2>
+                <div id="messages-loading" class="loading" style="display:none;">
+                    <div class="spinner"></div>
+                </div>
+                <div id="messages-error"></div>
+                <div class="messages-list" id="messages-list"></div>
+                <button class="button" onclick="getMessages()">Obtener Mensajes</button>
+            </div>
+            
+            <!-- Conversaciones -->
+            <div class="card">
+                <h2>👥 Conversaciones</h2>
+                <div id="conversations-loading" class="loading" style="display:none;">
+                    <div class="spinner"></div>
+                </div>
+                <div id="conversations-error"></div>
+                <div class="conversations-list" id="conversations-list"></div>
+                <button class="button" onclick="getConversations()">Obtener Conversaciones</button>
+            </div>
+        </div>
+        
+        <!-- Monitor Stats -->
+        <div class="card">
+            <h2>📊 Estadísticas del Monitor</h2>
+            <div id="stats-container"></div>
+            <button class="button" onclick="getStats()">Actualizar Estadísticas</button>
+        </div>
+        
+        <!-- WebSocket Info -->
+        <div class="card">
+            <h2>📡 WebSocket Real-Time</h2>
+            <div class="info-box">
+                <strong>URL:</strong><br>
+                <div class="code">ws://192.168.0.214:8000/ws/messages</div>
+            </div>
+            <div class="info-box">
+                <strong>Ejemplo JavaScript:</strong><br>
+                <div class="code">const ws = new WebSocket('ws://192.168.0.214:8000/ws/messages')<br>
+ws.onmessage = (e) => console.log(JSON.parse(e.data))</div>
+            </div>
+            <div id="websocket-status"></div>
+            <button class="button" onclick="connectWebSocket()">Conectar WebSocket</button>
+            <button class="button secondary" onclick="disconnectWebSocket()">Desconectar</button>
+        </div>
+    </div>
+    
+    <script>
+        const API_URL = 'http://192.168.0.214:8000';
+        let ws = null;
+        
+        // Utilidades
+        function showError(containerId, message) {
+            const container = document.getElementById(containerId);
+            container.innerHTML = `<div class="error">${message}</div>`;
+        }
+        
+        function showSuccess(containerId, message) {
+            const container = document.getElementById(containerId);
+            container.innerHTML = `<div class="success">${message}</div>`;
+        }
+        
+        // Health Check
+        async function checkHealth() {
+            try {
+                const response = await fetch(`${API_URL}/health`);
+                if (response.ok) {
+                    document.getElementById('health-dot').className = 'status-dot green';
+                    document.getElementById('health-status').textContent = '✅ Servicio en línea';
+                    showSuccess('config-info', 'Servicio respondiendo correctamente');
+                } else {
+                    document.getElementById('health-dot').className = 'status-dot yellow';
+                    document.getElementById('health-status').textContent = '⚠️ Respuesta anómala';
+                }
+            } catch (error) {
+                document.getElementById('health-dot').className = 'status-dot red';
+                document.getElementById('health-status').textContent = '❌ Servicio no disponible';
+                showError('config-info', `Error: ${error.message}`);
+            }
+        }
+        
+        // Get Config
+        async function getConfig() {
+            try {
+                const response = await fetch(`${API_URL}/config`);
+                if (!response.ok) throw new Error('No se pudo obtener config');
+                const config = await response.json();
+                
+                let html = `<div class="success">✅ Configuración cargada</div>`;
+                html += `<div style="margin-top: 10px; font-size: 0.85em;">`;
+                html += `<strong>Credenciales:</strong><br>`;
+                html += `• li_at: ${config.li_at ? config.li_at.substring(0, 20) + '...' : 'N/A'}<br>`;
+                html += `• jsessionid: ${config.jsessionid || 'N/A'}<br>`;
+                html += `• bcookie: ${config.bcookie ? config.bcookie.substring(0, 20) + '...' : 'N/A'}<br>`;
+                html += `• Last sync: ${config.last_sync || 'N/A'}<br>`;
+                html += `</div>`;
+                
+                document.getElementById('config-info').innerHTML = html;
+            } catch (error) {
+                showError('config-info', `Error: ${error.message}`);
+            }
+        }
+        
+        // Get Messages
+        async function getMessages() {
+            try {
+                document.getElementById('messages-loading').style.display = 'block';
+                document.getElementById('messages-list').innerHTML = '';
+                
+                const response = await fetch(`${API_URL}/messages?limit=10`);
+                if (!response.ok) throw new Error('No se pudieron obtener mensajes');
+                const data = await response.json();
+                
+                document.getElementById('messages-loading').style.display = 'none';
+                
+                let html = '';
+                const messages = data.records || data.messages || [];
+                
+                if (messages.length === 0) {
+                    html = '<div class="info-box">Sin mensajes aún</div>';
+                } else {
+                    messages.forEach((msg, i) => {
+                        html += `<div class="message-item">
+                            <div class="message-from">${msg.from || msg.sender || 'Unknown'}</div>
+                            <div class="message-time">${msg.timestamp || msg.date || 'N/A'}</div>
+                            <div class="message-body">${(msg.body || msg.message || msg.text || 'N/A').substring(0, 200)}</div>
+                        </div>`;
+                    });
+                }
+                
+                document.getElementById('messages-list').innerHTML = html;
+            } catch (error) {
+                document.getElementById('messages-loading').style.display = 'none';
+                showError('messages-error', `Error: ${error.message}`);
+            }
+        }
+        
+        // Get Conversations
+        async function getConversations() {
+            try {
+                document.getElementById('conversations-loading').style.display = 'block';
+                document.getElementById('conversations-list').innerHTML = '';
+                
+                const response = await fetch(`${API_URL}/conversations`);
+                if (!response.ok) throw new Error('No se pudieron obtener conversaciones');
+                const data = await response.json();
+                
+                document.getElementById('conversations-loading').style.display = 'none';
+                
+                let html = '';
+                const conversations = data.conversations || data.records || [];
+                
+                if (conversations.length === 0) {
+                    html = '<div class="info-box">Sin conversaciones aún</div>';
+                } else {
+                    conversations.forEach((conv, i) => {
+                        html += `<div class="conversation-item">
+                            <div class="conversation-name">${conv.name || conv.subject || 'Sin nombre'}</div>
+                            <div class="conversation-info">
+                                👥 ${conv.participants ? conv.participants.length : '?'} participantes | 
+                                💬 ${conv.message_count || conv.messages_count || '?'} mensajes
+                            </div>
+                        </div>`;
+                    });
+                }
+                
+                document.getElementById('conversations-list').innerHTML = html;
+            } catch (error) {
+                document.getElementById('conversations-loading').style.display = 'none';
+                showError('conversations-error', `Error: ${error.message}`);
+            }
+        }
+        
+        // Get Stats
+        async function getStats() {
+            try {
+                const response = await fetch(`${API_URL}/monitor/stats`);
+                if (!response.ok) throw new Error('No se pudieron obtener estadísticas');
+                const stats = await response.json();
+                
+                let html = '<div class="stats-grid">';
+                for (const [key, value] of Object.entries(stats)) {
+                    html += `<div class="stat">
+                        <div class="stat-value">${value}</div>
+                        <div class="stat-label">${key}</div>
+                    </div>`;
+                }
+                html += '</div>';
+                
+                document.getElementById('stats-container').innerHTML = html;
+            } catch (error) {
+                showError('stats-container', `Error: ${error.message}`);
+            }
+        }
+        
+        // WebSocket
+        function connectWebSocket() {
+            try {
+                ws = new WebSocket('ws://192.168.0.214:8000/ws/messages');
+                
+                ws.onopen = () => {
+                    document.getElementById('websocket-status').innerHTML = 
+                        '<div class="success">✅ Conectado a WebSocket</div>';
+                };
+                
+                ws.onmessage = (event) => {
+                    const message = JSON.parse(event.data);
+                    console.log('Mensaje recibido:', message);
+                    const status = document.getElementById('websocket-status');
+                    status.innerHTML += `<div class="message-item">${JSON.stringify(message).substring(0, 200)}</div>`;
+                };
+                
+                ws.onerror = (error) => {
+                    document.getElementById('websocket-status').innerHTML = 
+                        '<div class="error">❌ Error en WebSocket: ' + error + '</div>';
+                };
+                
+                ws.onclose = () => {
+                    document.getElementById('websocket-status').innerHTML = 
+                        '<div class="error">❌ Desconectado de WebSocket</div>';
+                };
+            } catch (error) {
+                showError('websocket-status', `Error: ${error.message}`);
+            }
+        }
+        
+        function disconnectWebSocket() {
+            if (ws) {
+                ws.close();
+                document.getElementById('websocket-status').innerHTML = 
+                    '<div class="info-box">⏸️ WebSocket desconectado</div>';
+            }
+        }
+        
+        // Auto-load en iniciar
+        window.addEventListener('load', () => {
+            checkHealth();
+            getConfig();
+        });
+    </script>
+</body>
+</html>
