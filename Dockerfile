@@ -13,25 +13,19 @@ COPY requirements.txt .
 # Instalar dependencias Python
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copiar código fuente (archivos críticos)
+# Copiar código fuente REQUERIDO
 COPY main.py .
 COPY connection_manager.py .
 COPY websocket_integration.py .
 COPY voyager_helper.py .
 
-# Copiar archivos opcionales si existen
-COPY linkedin_login.py . 2>/dev/null || true
-COPY config/ ./config/ 2>/dev/null || true
-COPY data/ ./data/ 2>/dev/null || true
-COPY logs/ ./logs/ 2>/dev/null || true
-
-# Crear directorios necesarios (fallback si no existen)
+# Crear directorios necesarios
 RUN mkdir -p config data logs
 
 # Exponer puerto
 EXPOSE 8000
 
-# Healthcheck (simple - solo verifica si el proceso está corriendo)
+# Healthcheck (verifica que el puerto está escuchando)
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD python -c "import socket; socket.create_connection(('localhost', 8000), timeout=2)" || exit 1
 
