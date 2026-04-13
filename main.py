@@ -20,6 +20,9 @@ from pydantic import BaseModel
 import httpx
 from linkedin_api import Linkedin
 
+# 🚀 NUEVO: Importar WebSocket integration
+from websocket_integration import setup_websocket_lifespan, setup_websocket_endpoints
+
 # 🚀 NUEVO: Importar Voyager helper
 from voyager_helper import (
     create_voyager_session,
@@ -91,6 +94,10 @@ app = FastAPI(
     redoc_url="/redoc",
     openapi_url="/openapi.json"
 )
+
+# 🚀 NUEVO: Setup WebSocket integration
+setup_websocket_lifespan(app, load_config, create_linkedin_client_with_cookies)
+setup_websocket_endpoints(app, load_config)
 
 
 # ===== UTILIDADES =====
