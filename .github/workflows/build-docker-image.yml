@@ -36,6 +36,21 @@ jobs:
         with:
           username: ${{ secrets.DOCKER_USER }}
           password: ${{ secrets.DOCKER_PAT }}
+        continue-on-error: false
+
+      - name: 🔍 Verify secrets
+        run: |
+          if [ -z "${{ secrets.DOCKER_USER }}" ]; then
+            echo "❌ ERROR: DOCKER_USER secret not configured"
+            exit 1
+          fi
+          if [ -z "${{ secrets.DOCKER_PAT }}" ]; then
+            echo "❌ ERROR: DOCKER_PAT secret not configured"
+            exit 1
+          fi
+          echo "✅ Secrets verified"
+          echo "   Username: ${{ secrets.DOCKER_USER }}"
+          echo "   PAT: (hidden)"
 
       - name: 📊 Extract metadata
         id: meta
@@ -53,7 +68,7 @@ jobs:
         uses: docker/build-push-action@v4
         with:
           context: .
-          push: ${{ github.event_name != 'pull_request' && secrets.DOCKER_PAT != '' }}
+          push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ secrets.DOCKER_USER }}/${{ env.IMAGE_NAME }}:buildcache
