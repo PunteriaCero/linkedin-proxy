@@ -1588,6 +1588,16 @@ async def get_messages():
         
         logger.info(f"Encontradas {len(conversations)} conversaciones")
         
+        # FIX (Apr 18, 2026): Validar que conversations sea una lista
+        # Problema: LinkedIn API puede devolver dict en lugar de list en caso de error
+        # Error original: TypeError: unhashable type: 'slice'
+        if isinstance(conversations, dict):
+            conversations = [conversations] if conversations else []
+        elif not isinstance(conversations, list):
+            conversations = []
+        
+        logger.debug(f"Tipo de conversations después del fix: {type(conversations)} - {len(conversations)} items")
+        
         # Procesar conversaciones
         result_conversations = []
         for conv in conversations[:10]:  # Límite de 10 para prueba
